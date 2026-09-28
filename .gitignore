@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+coverage/
+test-results/
+*.log
+.DS_Store
+public/assets/train-atlas.png
+public/assets/tundra.png
