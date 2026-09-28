@@ -1,4 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+const outputPath = `dist/train-v${version}.html`;
 const html = await readFile('dist/index.html', 'utf8');
 const jsPath = html.match(/<script[^>]+src="([^"]+)"[^>]*><\/script>/)?.[1];
 const cssPath = html.match(/<link[^>]+href="([^"]+\.css)"[^>]*>/)?.[1];
@@ -19,9 +21,9 @@ const out = html
   );
 const notice = await readFile('node_modules/three/LICENSE', 'utf8');
 await writeFile(
-  'dist/train-v0.1.html',
+  outputPath,
   out.replace('</head>', `<!-- Third-party runtime: Three.js\n${notice}\n--></head>`),
 );
 console.log(
-  `Portable game: dist/train-v0.1.html (${(Buffer.byteLength(out) / 1024 / 1024).toFixed(2)} MiB)`,
+  `Portable game: ${outputPath} (${(Buffer.byteLength(out) / 1024 / 1024).toFixed(2)} MiB)`,
 );

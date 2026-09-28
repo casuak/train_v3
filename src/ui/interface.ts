@@ -1,3 +1,4 @@
+import { version } from '../../package.json';
 import { FACILITY, ITEM, NODES, RECIPE, WORKS, WORK_NAME } from '../sim/content';
 import {
   addCar,
@@ -28,6 +29,7 @@ import { deserialize, exportGame, loadGame, saveGame } from '../save/storage';
 import type { FacilityKind, GameState, Item, Point, Work } from '../sim/types';
 import { TrainScene, type Pick } from '../render/scene';
 import { Sound } from './audio';
+import { updateHTML } from './dom';
 export const esc = (v: unknown) =>
   String(v).replace(
     /[&<>"']/g,
@@ -73,12 +75,11 @@ export class GameUI {
   buildKind: FacilityKind | null = null;
   rotation = 0;
   private toastTimer = 0;
-  private cache = '';
-  private lastLog = 0;
   private lastNode = '';
   private firstStart = true;
   private lastRaid = false;
   private dragging: {
+    pointerId: number;
     x: number;
     y: number;
     lastX: number;
@@ -148,8 +149,7 @@ export class GameUI {
       const f = input.files?.[0];
       if (!f) return;
       try {
-        this.replace(deserialize(await f.text()));
-        this.closeModal();
+        this.restore(deserialize(await f.text()));
         this.toast('存档已导入，游戏处于暂停状态');
       } catch (err) {
         this.toast(String(err), true);
@@ -160,15 +160,44 @@ export class GameUI {
     window.addEventListener('keydown', (e) => this.key(e));
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
+        this.cancelDrag();
         setSpeed(this.getState(), 0);
         this.refresh();
       }
+    });
+    window.addEventListener('blur', () => {
+      this.cancelDrag();
+      this.hideContext();
+      setSpeed(this.getState(), 0);
+      this.refresh();
     });
     this.refresh();
     this.welcome();
   }
   private state() {
     return this.getState();
+  }
+  private resetSession(firstStart: boolean) {
+    this.cancelDrag();
+    this.hideContext();
+    this.closeModal();
+    this.selected = [];
+    this.facility = null;
+    this.buildKind = null;
+    this.rotation = 0;
+    this.modalFacility = '';
+    this.mapNode = 'farm';
+    this.lastRaid = false;
+    this.lastNode = '';
+    this.firstStart = firstStart;
+    this.scene.hoverPoint = null;
+    this.setLayer('inside');
+  }
+  private restore(saved: GameState) {
+    this.resetSession(false);
+    this.replace(saved);
+    this.mapNode = saved.journey?.to ?? saved.node;
+    this.refresh();
   }
   toast(text: string, error = false) {
     const el = this.el('toast');
@@ -184,7 +213,7 @@ export class GameUI {
   welcome() {
     this.modal = 'welcome';
     this.el('modal-root').innerHTML =
-      `<div class="modal-backdrop welcome-backdrop"><section class="welcome-card"><div class="eyebrow">A JOURNEY THROUGH THE CHANGING WORLD</div><div class="welcome-emblem">${ico('train')}</div><h1>逐温线</h1><p class="english-title">THE WANDERING LINE</p><div class="fine-rule"></div><p class="welcome-copy">世界正在变冷。<br/>带上六位旅人，一列火车，<br/>和寻找下一个春天的希望。</p><div class="welcome-features"><span>经营列车</span><i>✦</i><span>选择旅途</span><i>✦</i><span>守住车顶</span></div>${button('start', `开始迁徙 ${ico('arrow')}`, '', 'primary welcome-start')}<div class="welcome-secondary">${button('continue', '读取旅程存档')}${button('help', '游玩指南')}</div><p class="welcome-foot">PC 网页端 · 鼠标操作 · 空格暂停<br/>首个可玩版本 / v0.1.0</p></section></div>`;
+      `<div class="modal-backdrop welcome-backdrop"><section class="welcome-card"><div class="eyebrow">A JOURNEY THROUGH THE CHANGING WORLD</div><div class="welcome-emblem">${ico('train')}</div><h1>逐温线</h1><p class="english-title">THE WANDERING LINE</p><div class="fine-rule"></div><p class="welcome-copy">世界正在变冷。<br/>带上六位旅人，一列火车，<br/>和寻找下一个春天的希望。</p><div class="welcome-features"><span>经营列车</span><i>✦</i><span>选择旅途</span><i>✦</i><span>守住车顶</span></div>${button('start', `开始迁徙 ${ico('arrow')}`, '', 'primary welcome-start')}<div class="welcome-secondary">${button('continue', '读取旅程存档')}${button('help', '游玩指南')}</div><p class="welcome-foot">PC 网页端 · 鼠标操作 · 空格暂停<br/>试玩版本 / v${version}</p></section></div>`;
   }
   refresh() {
     const s = this.state(),
@@ -194,7 +223,8 @@ export class GameUI {
     this.scene.buildKind = this.buildKind;
     this.scene.buildRotation = this.rotation;
     this.scene.gridVisible = !!this.buildKind;
-    this.el('resources').innerHTML =
+    updateHTML(
+      this.el('resources'),
       (['meal', 'fuel', 'parts', 'metal'] as Item[])
         .map((i) =>
           button(
@@ -204,28 +234,38 @@ export class GameUI {
             'resource',
           ),
         )
-        .join('') + `<div class="crew-count"><b>${living.length}</b><small>旅人</small></div>`;
-    this.el('crew').innerHTML = s.pawns
-      .filter((p) => !p.enemy)
-      .map((p) =>
-        button(
-          'select',
-          `<div class="portrait ${p.dead ? 'fallen' : ''}" style="--portrait-color:${p.color}"><span class="portrait-image"></span>${p.drafted ? '<i class="draft-mark">⚔</i>' : ''}<div class="portrait-health" style="width:${p.hp}%"></div></div><b>${esc(p.name)}</b><small>${p.dead ? '已阵亡' : esc(p.status)}</small>`,
-          `data-id="${p.id}" aria-label="选择${p.name}" title="${esc(p.role)} · 饱食 ${Math.round(p.hunger)} · 精力 ${Math.round(p.energy)}"`,
-          `crew-card ${this.selected.includes(p.id) ? 'selected' : ''} ${p.dead ? 'dead' : ''}`,
-        ),
-      )
-      .join('');
+        .join('') + `<div class="crew-count"><b>${living.length}</b><small>旅人</small></div>`,
+    );
+    updateHTML(
+      this.el('crew'),
+      s.pawns
+        .filter((p) => !p.enemy)
+        .map((p) =>
+          button(
+            'select',
+            `<div class="portrait ${p.dead ? 'fallen' : ''}" style="--portrait-color:${p.color}"><span class="portrait-image"></span>${p.drafted ? '<i class="draft-mark">⚔</i>' : ''}<div class="portrait-health" style="width:${p.hp}%"></div></div><b>${esc(p.name)}</b><small>${p.dead ? '已阵亡' : esc(p.status)}</small>`,
+            `data-id="${p.id}" aria-label="选择${esc(p.name)}" title="${esc(p.role)} · 饱食 ${Math.round(p.hunger)} · 精力 ${Math.round(p.energy)}"`,
+            `crew-card ${this.selected.includes(p.id) ? 'selected' : ''} ${p.dead ? 'dead' : ''}`,
+          ),
+        )
+        .join(''),
+    );
     const j = s.journey,
       node = NODES.find((n) => n.id === s.node)!,
       dest = j ? NODES.find((n) => n.id === j.to)! : null,
       progress = j ? Math.min(100, (j.elapsed / j.duration) * 100) : 0;
-    this.el('journey-panel').innerHTML =
-      `<div class="eyebrow">THE EXPEDITION</div><div class="journey-title"><h2>向暖而行</h2><span class="status-dot ${j ? 'moving' : ''}"></span></div><p class="muted">第 ${t.day} 日 · ${j ? '穿越铁路荒野' : '停靠整备'}</p><div class="journey-stops"><span>${esc(node.name)}</span><i>↓</i><strong>${dest ? esc(dest.name) : '下一站，由你决定'}</strong></div><div class="progress-track"><i style="width:${progress}%"></i></div><div class="journey-meta"><span>${j ? `${Math.max(0, Math.ceil((j.duration - j.elapsed) * 3))} 游戏分钟` : '可进行交易与补给'}</span><b>${j ? Math.round(progress) + '%' : '停靠中'}</b></div>${button('map', `${j ? '查看铁路地图' : '选择下一站'} ${ico('arrow')}`, '', 'route-button')}<div class="destination-note"><span>最终目的地</span><b>白桦避风港</b></div>`;
-    this.el('weather').innerHTML =
-      `<div class="eyebrow">${s.weather > 0.4 ? 'COLD FRONT APPROACHING' : 'AUTUMN / NORTHLAND'}</div><div class="temperature">${ico('sun')}<b>${Math.round(s.temperature)}<sup>°C</sup></b><span>${s.weather > 0.5 ? '寒潮' : '薄云'}</span></div><div class="weather-detail"><span>车内 ${Math.round(temperature(s, 'inside'))}°C</span><span>秋 · 第 ${t.day} 日</span></div><p>${s.time < 400 ? '寒潮预计第 2 日到达' : s.time < 1100 ? '北部山线将在第 3 日封锁' : '北部山线已封锁'}</p>`;
-    this.el('clock').innerHTML =
-      `<small>DAY ${String(t.day).padStart(2, '0')}</small><b>${t.text}</b>`;
+    updateHTML(
+      this.el('journey-panel'),
+      `<div class="eyebrow">THE EXPEDITION</div><div class="journey-title"><h2>向暖而行</h2><span class="status-dot ${j ? 'moving' : ''}"></span></div><p class="muted">第 ${t.day} 日 · ${j ? '穿越铁路荒野' : '停靠整备'}</p><div class="journey-stops"><span>${esc(node.name)}</span><i>↓</i><strong>${dest ? esc(dest.name) : '下一站，由你决定'}</strong></div><div class="progress-track"><i style="width:${progress}%"></i></div><div class="journey-meta"><span>${j ? `${Math.max(0, Math.ceil((j.duration - j.elapsed) * 3))} 游戏分钟` : '可进行交易与补给'}</span><b>${j ? Math.round(progress) + '%' : '停靠中'}</b></div>${button('map', `${j ? '查看铁路地图' : '选择下一站'} ${ico('arrow')}`, '', 'route-button')}<div class="destination-note"><span>最终目的地</span><b>白桦避风港</b></div>`,
+    );
+    updateHTML(
+      this.el('weather'),
+      `<div class="eyebrow">${s.weather > 0.4 ? 'COLD FRONT APPROACHING' : 'AUTUMN / NORTHLAND'}</div><div class="temperature">${ico('sun')}<b>${Math.round(s.temperature)}<sup>°C</sup></b><span>${s.weather > 0.5 ? '寒潮' : '薄云'}</span></div><div class="weather-detail"><span>车内 ${Math.round(temperature(s, 'inside'))}°C</span><span>秋 · 第 ${t.day} 日</span></div><p>${s.time < 400 ? '寒潮预计第 2 日到达' : s.time < 1100 ? '北部山线将在第 3 日封锁' : '北部山线已封锁'}</p>`,
+    );
+    updateHTML(
+      this.el('clock'),
+      `<small>DAY ${String(t.day).padStart(2, '0')}</small><b>${t.text}</b>`,
+    );
     this.el('speed-buttons')
       .querySelectorAll<HTMLButtonElement>('button')
       .forEach((b) => {
@@ -233,18 +273,27 @@ export class GameUI {
         b.classList.toggle('active', active);
         b.setAttribute('aria-pressed', String(active));
       });
-    this.el('raid-alert').innerHTML = s.raidActive
-      ? `<div class="raid-alert"><div><b>登车警报</b><span>车顶 ${enemies(s).filter((p) => p.layer === 'roof').length} 人 · 车内 ${enemies(s).filter((p) => p.layer === 'inside').length} 人</span></div>${button('defend', '征召并部署车顶', '', 'danger-button')}${button('layer-roof', '查看车顶')}</div>`
-      : '';
+    updateHTML(
+      this.el('raid-alert'),
+      s.raidActive
+        ? `<div class="raid-alert"><div><b>登车警报</b><span>车顶 ${enemies(s).filter((p) => p.layer === 'roof').length} 人 · 车内 ${enemies(s).filter((p) => p.layer === 'inside').length} 人</span></div>${button('defend', '征召并部署车顶', '', 'danger-button')}${button('layer-roof', '查看车顶')}</div>`
+        : '',
+    );
     if (s.raidActive && !this.lastRaid) this.sound.play('alarm');
     this.lastRaid = s.raidActive;
-    this.el('recent-log').innerHTML = s.logs
-      .slice(0, 3)
-      .map((l) => `<div class="log-line ${l.tone}"><i></i><p>${esc(l.text)}</p></div>`)
-      .join('');
-    this.el('build-banner').innerHTML = this.buildKind
-      ? `<b>放置${FACILITY[this.buildKind].name}</b><span>左键放置 · R 旋转 · Esc 取消</span>${button('rotate', '旋转')}${button('cancel-build', '完成')}`
-      : '';
+    updateHTML(
+      this.el('recent-log'),
+      s.logs
+        .slice(0, 3)
+        .map((l) => `<div class="log-line ${l.tone}"><i></i><p>${esc(l.text)}</p></div>`)
+        .join(''),
+    );
+    updateHTML(
+      this.el('build-banner'),
+      this.buildKind
+        ? `<b>放置${FACILITY[this.buildKind].name}</b><span>左键放置 · R 旋转 · Esc 取消</span>${button('rotate', '旋转')}${button('cancel-build', '完成')}`
+        : '',
+    );
     this.el('build-banner').classList.toggle('show', !!this.buildKind);
     this.el('hint').textContent = this.buildKind
       ? '保留中央走廊，为建造师预留通路'
@@ -272,18 +321,24 @@ export class GameUI {
       const p = ps[0],
         bars = (label: string, n: number, color: string) =>
           `<div class="stat-line"><span>${label}</span><div><i style="width:${Math.max(0, n)}%;background:${color}"></i></div><b>${Math.round(n)}</b></div>`;
-      el.innerHTML = `<div class="eyebrow">${ps.length > 1 ? `${ps.length} 位旅人已选择` : 'TRAVELER'}</div><div class="inspect-title"><h2>${esc(p.name)}${ps.length > 1 ? ' 等' : ''}</h2><span>${p.enemy ? '敌对' : esc(p.role)}</span>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div>${ps.length === 1 ? bars('生命', p.hp, '#95bd9f') + bars('饱食', p.hunger, '#cfb278') + bars('精力', p.energy, '#96adbd') : ''}<p class="current-job">${esc(p.status)}${p.task?.forced ? ' · 强制指令' : ''}</p><div class="inspect-actions">${!p.enemy ? button('draft', `${ico('shield')} ${ps.every((p) => p.drafted) ? '解除征召' : '征召'} <kbd>R</kbd>`, '', 'primary') + button('to-roof', this.scene.layer === 'roof' ? '返回车内' : '前往车顶') + button('eat', '进食') + button('rest', '休息') : ''}</div>`;
+      updateHTML(
+        el,
+        `<div class="eyebrow">${ps.length > 1 ? `${ps.length} 位旅人已选择` : 'TRAVELER'}</div><div class="inspect-title"><h2>${esc(p.name)}${ps.length > 1 ? ' 等' : ''}</h2><span>${p.enemy ? '敌对' : esc(p.role)}</span>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div>${ps.length === 1 ? bars('生命', p.hp, '#95bd9f') + bars('饱食', p.hunger, '#cfb278') + bars('精力', p.energy, '#96adbd') : ''}<p class="current-job">${esc(p.status)}${p.task?.forced ? ' · 强制指令' : ''}</p><div class="inspect-actions">${!p.enemy ? button('draft', `${ico('shield')} ${ps.every((p) => p.drafted) ? '解除征召' : '征召'} <kbd>R</kbd>`, '', 'primary') + button('to-roof', this.scene.layer === 'roof' ? '返回车内' : '前往车顶') + button('eat', '进食') + button('rest', '休息') : ''}</div>`,
+      );
       el.classList.add('visible');
       return;
     }
     if (f) {
       const def = FACILITY[f.kind];
-      el.innerHTML = `<div class="eyebrow">${f.layer === 'roof' ? 'ROOFTOP' : 'TRAIN FACILITY'}</div><div class="inspect-title"><h2>${def.name}</h2>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div><p class="facility-description">${def.description}</p><div class="facility-condition"><span>${f.built ? '耐久' : '建造进度'}</span><b>${f.built ? `${Math.ceil(f.hp)} / ${f.maxHp}` : `${Math.round(f.buildProgress * 100)}%`}</b></div><div class="inspect-actions">${f.kind === 'stove' || f.kind === 'bench' ? button('production', '设置制作清单', `data-id="${f.id}"`, 'primary') : ''}${f.kind === 'heater' ? button('toggle-facility', f.enabled ? '关闭供暖' : '开启供暖', `data-id="${f.id}"`) : ''}${def.buildable ? button('dismantle', f.built ? '拆除设施' : '取消蓝图', `data-id="${f.id}"`) : ''}</div><small>选择旅人后右键设施，可安排强制工作。</small>`;
+      updateHTML(
+        el,
+        `<div class="eyebrow">${f.layer === 'roof' ? 'ROOFTOP' : 'TRAIN FACILITY'}</div><div class="inspect-title"><h2>${def.name}</h2>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div><p class="facility-description">${def.description}</p><div class="facility-condition"><span>${f.built ? '耐久' : '建造进度'}</span><b>${f.built ? `${Math.ceil(f.hp)} / ${f.maxHp}` : `${Math.round(f.buildProgress * 100)}%`}</b></div><div class="inspect-actions">${f.kind === 'stove' || f.kind === 'bench' ? button('production', '设置制作清单', `data-id="${f.id}"`, 'primary') : ''}${f.kind === 'heater' ? button('toggle-facility', f.enabled ? '关闭供暖' : '开启供暖', `data-id="${f.id}"`) : ''}${def.buildable ? button('dismantle', f.built ? '拆除设施' : '取消蓝图', `data-id="${f.id}"`) : ''}</div><small>选择旅人后右键设施，可安排强制工作。</small>`,
+      );
       el.classList.add('visible');
       return;
     }
     el.classList.remove('visible');
-    el.innerHTML = '';
+    updateHTML(el, '');
   }
   private panel(title: string, subtitle: string, body: string, wide = false) {
     this.el('modal-root').innerHTML =
@@ -308,7 +363,7 @@ export class GameUI {
         )
           .map(
             (p) =>
-              `<tr><td><b>${esc(p.name)}</b><small>${esc(p.role)}</small></td>${WORKS.map((w) => `<td>${button('priority', p.priorities[w] || '—', `data-id="${p.id}" data-work="${w}" aria-label="${p.name} ${WORK_NAME[w]} 优先级 ${p.priorities[w]}"`, `priority p${p.priorities[w]}`)}<small>技能 ${p.skills[w]}</small></td>`).join('')}</tr>`,
+              `<tr><td><b>${esc(p.name)}</b><small>${esc(p.role)}</small></td>${WORKS.map((w) => `<td>${button('priority', p.priorities[w] || '—', `data-id="${p.id}" data-work="${w}" aria-label="${esc(p.name)} ${WORK_NAME[w]} 优先级 ${p.priorities[w]}"`, `priority p${p.priorities[w]}`)}<small>技能 ${p.skills[w]}</small></td>`).join('')}</tr>`,
           )
           .join(
             '',
@@ -686,11 +741,7 @@ export class GameUI {
           this.toast('没有找到对应存档', true);
           return;
         }
-        this.firstStart = false;
-        this.selected = [];
-        this.facility = null;
-        this.replace(saved);
-        this.closeModal();
+        this.restore(saved);
         this.toast('旅程已恢复，点击倍速按钮继续');
       } catch {
         this.toast('存档读取失败，可尝试导入备份', true);
@@ -703,10 +754,8 @@ export class GameUI {
       this.refreshModal();
     }
     if (a === 'new') {
-      this.selected = [];
-      this.facility = null;
+      this.resetSession(true);
       this.newGame();
-      this.firstStart = true;
       this.welcome();
     }
     this.refresh();
@@ -791,10 +840,13 @@ export class GameUI {
     const canvas = this.scene.renderer.domElement;
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
+      if (this.modal || e.button > 2) return;
+      e.preventDefault();
       this.sound.unlock();
       this.hideContext();
       canvas.setPointerCapture(e.pointerId);
       this.dragging = {
+        pointerId: e.pointerId,
         x: e.clientX,
         y: e.clientY,
         lastX: e.clientX,
@@ -806,7 +858,7 @@ export class GameUI {
     canvas.addEventListener('pointermove', (e) => {
       this.scene.hoverPoint = this.scene.worldAt(e.clientX, e.clientY);
       const d = this.dragging;
-      if (!d) return;
+      if (!d || d.pointerId !== e.pointerId) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true;
       if (d.moved && (d.button === 1 || d.button === 2))
         this.scene.pan(e.clientX - d.lastX, e.clientY - d.lastY);
@@ -820,9 +872,8 @@ export class GameUI {
     });
     canvas.addEventListener('pointerup', (e) => {
       const d = this.dragging;
-      this.dragging = null;
-      this.el('select-box').hidden = true;
-      if (!d) return;
+      if (!d || d.pointerId !== e.pointerId) return;
+      this.cancelDrag();
       const pick = this.scene.pick(e.clientX, e.clientY);
       if (d.moved) {
         if (d.button === 0 && !this.buildKind) {
@@ -874,6 +925,8 @@ export class GameUI {
       }
       this.refresh();
     });
+    canvas.addEventListener('pointercancel', () => this.cancelDrag());
+    canvas.addEventListener('lostpointercapture', () => this.cancelDrag());
     canvas.addEventListener(
       'wheel',
       (e) => {
@@ -887,24 +940,38 @@ export class GameUI {
         this.hideContext();
     });
   }
+  private cancelDrag() {
+    const d = this.dragging;
+    this.dragging = null;
+    this.el('select-box').hidden = true;
+    const canvas = this.scene.renderer.domElement;
+    if (d && canvas.hasPointerCapture?.(d.pointerId)) canvas.releasePointerCapture(d.pointerId);
+  }
   private key(e: KeyboardEvent) {
     if (
+      e.repeat ||
+      e.ctrlKey ||
+      e.metaKey ||
+      e.altKey ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable) ||
       e.target instanceof HTMLInputElement ||
       e.target instanceof HTMLTextAreaElement ||
       e.target instanceof HTMLSelectElement
     )
       return;
+    const pausedDialog = ['welcome', 'help', 'menu', 'new-confirm', 'end'].includes(this.modal);
     if (e.code === 'Space') {
       e.preventDefault();
-      if (this.modal === 'welcome') return;
+      if (pausedDialog) return;
       togglePause(this.state());
       this.refresh();
     }
-    if (['1', '2', '3'].includes(e.key) && this.modal !== 'welcome') {
+    if (['1', '2', '3'].includes(e.key) && !pausedDialog) {
       setSpeed(this.state(), Number(e.key) as 1 | 2 | 3);
       this.refresh();
     }
     if (e.key === 'Escape') {
+      this.cancelDrag();
       this.hideContext();
       if (this.buildKind) this.buildKind = null;
       else if (this.modal && this.modal !== 'welcome' && this.modal !== 'end') this.closeModal();

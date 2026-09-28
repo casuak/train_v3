@@ -42,7 +42,6 @@ export class TrainScene {
   private height = 1;
   private target = new THREE.Vector2(22, -3);
   private zoom = 1;
-  private lastDistance = 0;
   layer: Layer = 'inside';
   selected: string[] = [];
   buildKind: string | null = null;
@@ -200,8 +199,8 @@ export class TrainScene {
     return o;
   }
   private resize() {
-    this.width = this.container.clientWidth;
-    this.height = this.container.clientHeight;
+    this.width = Math.max(1, this.container.clientWidth);
+    this.height = Math.max(1, this.container.clientHeight);
     this.renderer.setSize(this.width, this.height);
     this.updateCamera();
   }
@@ -214,6 +213,45 @@ export class TrainScene {
     this.camera.bottom = -h / 2;
     this.camera.position.set(this.target.x, -this.target.y, 100);
     this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld(true);
+  }
+  reset() {
+    for (const rig of this.rigs.values()) this.disposeRig(rig);
+    this.rigs.clear();
+    for (const group of [
+      this.staticGroup,
+      this.units,
+      this.effectGroup,
+      this.grid,
+      this.selectionGhost,
+      this.rails,
+    ])
+      group.clear();
+    for (const material of this.mats.values()) {
+      material.map?.dispose();
+      material.dispose();
+    }
+    for (const material of this.labelMaterials.values()) {
+      material.map?.dispose();
+      material.dispose();
+    }
+    this.mats.clear();
+    this.labelMaterials.clear();
+    this.wheels = [];
+    this.stamp = '';
+    this.selected = [];
+    this.buildKind = null;
+    this.buildRotation = 0;
+    this.hoverPoint = null;
+    this.gridVisible = false;
+    this.layer = 'inside';
+    this.fit();
+  }
+  private disposeRig(rig: Rig) {
+    rig.root.traverse((object) => {
+      if (object instanceof THREE.Mesh && object.geometry !== this.plane) object.geometry.dispose();
+    });
+    this.units.remove(rig.root);
   }
   fit() {
     this.target.set((this.state().cars.length * 14 + 2) / 2, -3);
@@ -516,7 +554,7 @@ export class TrainScene {
     }
     for (const [id, rig] of this.rigs)
       if (!s.pawns.some((p) => p.id === id)) {
-        this.units.remove(rig.root);
+        this.disposeRig(rig);
         this.rigs.delete(id);
       }
     this.effectGroup.clear();
@@ -576,7 +614,6 @@ export class TrainScene {
     }
     this.container.style.setProperty('--terrain-shift', `${-((s.distance * 3) % 150)}px`);
     this.renderer.render(this.scene, this.camera);
-    this.lastDistance = s.distance;
   }
   getInfo() {
     return {

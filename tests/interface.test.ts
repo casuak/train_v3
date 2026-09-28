@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as storage from '../src/save/storage';
 import { GameUI } from '../src/ui/interface';
 import { TrainScene, type Pick } from '../src/render/scene';
 import { initialState, spawnRaid } from '../src/sim/game';
@@ -73,6 +74,7 @@ beforeEach(() => {
   ui.closeModal();
   ui.refresh();
 });
+afterEach(() => vi.restoreAllMocks());
 describe('PC 鼠标与快捷键交互', () => {
   it('右下角恰好四个倍速按钮，并能暂停恢复上一倍速', () => {
     expect(document.querySelectorAll('#speed-buttons button')).toHaveLength(4);
@@ -171,5 +173,103 @@ describe('PC 鼠标与快捷键交互', () => {
     click('[data-action="layer-inside"]');
     expect(scene.layer).toBe('inside');
     expect(s.speed).toBe(0);
+  });
+  it('长按暂停键只切换一次，浏览器组合快捷键不征召人物', () => {
+    click(`[data-action="speed"][data-speed="1"]`);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', repeat: true }));
+    expect(s.speed).toBe(0);
+    click(`#crew [data-id="${s.pawns[0].id}"]`);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', key: 'r', ctrlKey: true }));
+    expect(s.pawns[0].drafted).toBe(false);
+  });
+  it('人物状态刷新时保留按钮和键盘焦点', () => {
+    click(`#crew [data-id="${s.pawns[0].id}"]`);
+    const draftButton = document.querySelector<HTMLButtonElement>(
+      '#inspect [data-action="draft"]',
+    )!;
+    draftButton.focus();
+    s.pawns[0].hunger -= 1;
+    ui.refresh();
+    expect(draftButton.isConnected).toBe(true);
+    expect(document.activeElement).toBe(draftButton);
+    draftButton.click();
+    expect(s.pawns[0].drafted).toBe(true);
+  });
+  it('打开新局后清除旧局蓝图、楼层与旋转状态', () => {
+    ui.buildKind = 'barricade';
+    ui.rotation = 1;
+    scene.layer = 'roof';
+    ui.open('new-confirm');
+    click('[data-action="new"]');
+    expect(ui.buildKind).toBeNull();
+    expect(ui.rotation).toBe(0);
+    expect(scene.layer).toBe('inside');
+    expect(scene.buildKind).toBeNull();
+  });
+  it('指针操作取消后不继续平移，窗口失焦自动暂停', () => {
+    vi.mocked(scene.pan).mockClear();
+    canvas.dispatchEvent(new MouseEvent('pointerdown', { button: 2, clientX: 400, clientY: 300 }));
+    canvas.dispatchEvent(new MouseEvent('pointercancel', { button: 2 }));
+    canvas.dispatchEvent(new MouseEvent('pointermove', { clientX: 450, clientY: 350 }));
+    expect(scene.pan).not.toHaveBeenCalled();
+    click('[data-action="speed"][data-speed="3"]');
+    window.dispatchEvent(new Event('blur'));
+    expect(s.speed).toBe(0);
+  });
+  it('读取存档会清空蓝图与选中状态，并回到车内暂停', async () => {
+    const saved = initialState();
+    saved.credits = 80;
+    vi.spyOn(storage, 'loadGame').mockResolvedValue(saved);
+    ui.selected = [s.pawns[0].id];
+    ui.buildKind = 'barricade';
+    scene.layer = 'roof';
+    click('[data-action="menu"]');
+    click('[data-action="continue"]');
+    await vi.waitFor(() => expect(s.credits).toBe(80));
+    expect(ui.buildKind).toBeNull();
+    expect(ui.selected).toEqual([]);
+    expect(scene.layer).toBe('inside');
+    expect(s.speed).toBe(0);
+  });
+  it('导入存档后退出初次引导并清除旧局建造状态', async () => {
+    const saved = initialState();
+    saved.credits = 77;
+    ui.buildKind = 'heater';
+    const input = document.getElementById('import-save') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [{ text: async () => storage.serialize(saved) }],
+    });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(s.credits).toBe(77));
+    expect(ui.buildKind).toBeNull();
+    click('[data-action="help"]');
+    expect(document.querySelector('#modal-root [data-action="return-welcome"]')).toBeNull();
+  });
+  it('导入损坏文件不会替换当前旅程', async () => {
+    const before = s;
+    const input = document.getElementById('import-save') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [{ text: async () => '{}' }],
+    });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await vi.waitFor(() =>
+      expect(document.getElementById('toast')!.textContent).toContain('不支持'),
+    );
+    expect(s).toBe(before);
+  });
+  it('菜单和新局确认期间快捷键不会恢复模拟', () => {
+    click('[data-action="speed"][data-speed="3"]');
+    click('[data-action="menu"]');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ' }));
+    expect(s.speed).toBe(0);
+    click('[data-action="new-confirm"]');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1', key: '1' }));
+    expect(s.speed).toBe(0);
+    click('#modal-root [data-action="close"]');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ' }));
+    expect(s.speed).toBe(3);
   });
 });

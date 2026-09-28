@@ -14,8 +14,8 @@ jobs:
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
-          name: train-v0.1.0
+          name: train-pc
           path: |
-            dist/train-v0.1.html
+            dist/train-v*.html
             README.md
             docs/THREE-LICENSE.txt

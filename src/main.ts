@@ -26,21 +26,20 @@ let state = initialState(),
   lastEffect = 0;
 try {
   const scene = new TrainScene(document.getElementById('game-stage')!, () => state);
+  function replaceState(next: typeof state) {
+    state = next;
+    clock.reset();
+    scene.reset();
+    lastTime = performance.now();
+    lastSave = lastTime;
+    lastEffect = 0;
+  }
   const ui = new GameUI(
     root,
     () => state,
     scene,
-    (s) => {
-      state = s;
-      clock.reset();
-      scene.fit();
-      ui.refresh();
-    },
-    () => {
-      state = initialState();
-      clock.reset();
-      scene.fit();
-    },
+    replaceState,
+    () => replaceState(initialState()),
   );
   function frame(now: number) {
     const real = Math.min((now - lastTime) / 1000, 0.25);
@@ -65,7 +64,7 @@ try {
   requestAnimationFrame(frame);
   window.addEventListener('pagehide', () => {
     setSpeed(state, 0);
-    if (state.time > 0) void saveGame(state, 'auto');
+    if (state.time > 0) void saveGame(state, 'auto').catch(() => {});
   });
 } catch (err) {
   root.innerHTML = `<div class="startup-error"><h1>画面暂时无法启动</h1><p>请使用支持 WebGL 2 的 PC 浏览器，并开启硬件加速。</p><pre>${String(err).replace(/[<>&]/g, '')}</pre><button onclick="location.reload()">重新尝试</button></div>`;
