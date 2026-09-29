@@ -6,6 +6,12 @@ import { FLOOR_Y, lanePoint, layerAtHeight, sidePoint } from './side-view';
 import { ATLAS_REGIONS, ATLAS_SIZE } from './atlas-regions';
 import type { Facility, GameState, Layer, Pawn, Point } from '../sim/types';
 
+const RAIL_TOP_Y = 3.2;
+const TIE_SPACING = 1.2;
+// Presentation distance shared by the rails and wheels (world units per km).
+const TRAVEL_SCALE = 14;
+type WheelRig = { bone: THREE.Bone; radius: number };
+
 type Rig = {
   root: THREE.Group;
   body: THREE.Group;
@@ -38,10 +44,12 @@ export class TrainScene {
   private rails = new THREE.Group();
   private atlas = new THREE.TextureLoader().load(assets.atlas);
   private plane = new THREE.PlaneGeometry(1, 1);
+  private disc = new THREE.CircleGeometry(0.5, 64);
   private mats = new Map<string, THREE.MeshBasicMaterial>();
   private labelMaterials = new Map<string, THREE.SpriteMaterial>();
   private rigs = new Map<string, Rig>();
-  private wheels: THREE.Object3D[] = [];
+  private wheels: WheelRig[] = [];
+  private coupling: { driver: THREE.Bone; crank: THREE.Bone } | null = null;
   private stamp = '';
   private width = 1;
   private height = 1;
@@ -172,6 +180,64 @@ export class TrainScene {
     parent.add(o);
     return o;
   }
+  private addWheel(x: number, radius: number, kind: 'carriage' | 'locomotive') {
+    const bone = new THREE.Bone();
+    bone.name = `${kind}-wheel`;
+    bone.position.set(x, -(RAIL_TOP_Y - radius), 2.1);
+    // A circular tire fixes the contact radius independently of transparent
+    // padding in the generated art. Both meshes rotate about the axle center.
+    const tire = new THREE.Mesh(this.disc, this.material('#423d32'));
+    tire.name = 'wheel-tire';
+    tire.scale.set(radius * 2, radius * 2, 1);
+    bone.add(tire);
+    const face = new THREE.Mesh(this.disc, this.spriteMat(6));
+    face.name = 'wheel-face';
+    face.scale.copy(tire.scale);
+    face.position.z = 0.01;
+    bone.add(face);
+    const pin = new THREE.Mesh(this.disc, this.material('#edcd8c'));
+    pin.name = 'crank-pin';
+    pin.position.set(radius * 0.4, 0, 0.12);
+    pin.scale.set(radius * 0.18, radius * 0.18, 1);
+    bone.add(pin);
+    this.wheels.push({ bone, radius });
+    this.staticGroup.add(bone);
+    return bone;
+  }
+  private drawLocomotive(center: number) {
+    const scale = 7.8 / 394,
+      left = center - 3.9,
+      top = RAIL_TOP_Y - (1198 - 954) * scale;
+    // Sample the existing artwork in three pieces, omitting the baked-in
+    // wheels and rod. Preserve its original aspect ratio and rail baseline.
+    this.rect(this.staticGroup, center - 0.7, 1.66, 6.1, 0.54, '#283b36', 1.9);
+    for (const tile of [14, 16, 17]) {
+      const [x, y, w, h] = ATLAS_REGIONS[tile];
+      this.sprite(
+        this.staticGroup,
+        tile,
+        left + (x - 610 + w / 2) * scale,
+        top + (y - 954 + h / 2) * scale,
+        w * scale,
+        h * scale,
+        2,
+      );
+    }
+    const radius = 42 * scale;
+    const wheels = [699, 784, 869].map((x) =>
+      this.addWheel(left + (x - 610) * scale, radius, 'locomotive'),
+    );
+    // All three crank pins share a phase. Counter-rotate the rod's bone so
+    // the rod stays horizontal while its ends follow the driving wheels.
+    const crank = new THREE.Bone();
+    crank.name = 'coupling-rod';
+    crank.position.set(radius * 0.4, 0, 0.08);
+    wheels[0].add(crank);
+    const span = wheels[2].position.x - wheels[0].position.x;
+    this.rect(crank, span / 2, 0, span, 0.13, '#343e38');
+    this.rect(crank, span / 2, 0, span, 0.055, '#c3af80', 0.01);
+    this.coupling = { driver: wheels[0], crank };
+  }
   private text(
     parent: THREE.Object3D,
     text: string,
@@ -246,6 +312,7 @@ export class TrainScene {
     this.mats.clear();
     this.labelMaterials.clear();
     this.wheels = [];
+    this.coupling = null;
     this.stamp = '';
     this.selected = [];
     this.selectedFacility = null;
@@ -347,13 +414,15 @@ export class TrainScene {
     this.rails.clear();
     this.grid.clear();
     this.wheels = [];
+    this.coupling = null;
     const end = s.cars.length * 14 + 7;
     // A single rail silhouette below the wheels: no receding or overhead track.
     this.rect(this.rails, end / 2, 3.64, end + 160, 0.5, '#3a4946', -5);
-    for (let x = -80; x < end + 90; x += 1.2)
+    for (let x = -80; x < end + 90; x += TIE_SPACING)
       this.rect(this.rails, x, 3.49, 0.8, 0.2, '#635b4b', -4);
     this.rect(this.rails, end / 2, 3.28, end + 160, 0.15, '#1c3034', -3);
-    this.rect(this.rails, end / 2, 3.2, end + 160, 0.065, '#acb3a1', -2);
+    this.rect(this.rails, end / 2, RAIL_TOP_Y + 0.065 / 2, end + 160, 0.065, '#acb3a1', -2).name =
+      'rail-head';
     for (let ci = 0; ci < s.cars.length; ci++) {
       const car = s.cars[ci],
         x = car.x,
@@ -399,13 +468,7 @@ export class TrainScene {
       }
       for (const xx of [1.7, 9.3]) {
         this.rect(this.staticGroup, x + xx, 2.7, 2.05, 0.32, '#1f3234', 1.8);
-        for (const axle of [-0.48, 0.48]) {
-          const wheel = new THREE.Bone();
-          wheel.position.set(x + xx + axle, -2.82, 2);
-          this.sprite(wheel, 6, 0, 0, 1.08, 1.08, 0);
-          this.wheels.push(wheel);
-          this.staticGroup.add(wheel);
-        }
+        for (const axle of [-0.51, 0.51]) this.addWheel(x + xx + axle, 0.49, 'carriage');
       }
       for (const xx of [3.8, 8.1]) {
         this.rect(this.staticGroup, x + xx, -1.31, 1.15, 0.12, '#e6c987', 1);
@@ -431,7 +494,7 @@ export class TrainScene {
     }
     const engineX = s.cars.length * 14 + 1.7;
     this.rect(this.staticGroup, s.cars.length * 14 - 1.1, 2.45, 3.2, 0.18, '#354540', 0.5);
-    this.sprite(this.staticGroup, 14, engineX, 0.7, 7.8, 5, 2);
+    this.drawLocomotive(engineX);
     this.text(this.staticGroup, '巡游者号 · 向南', engineX, 4.15, '#dfc48c', 0.42);
     for (const f of s.facilities) this.drawFacility(f);
   }
@@ -557,8 +620,10 @@ export class TrainScene {
     }
     this.grid.visible = this.gridVisible;
     for (const tile of this.grid.children) tile.visible = tile.userData.layer === this.layer;
-    for (const wheel of this.wheels) wheel.rotation.z = -s.distance * 2.8;
-    this.rails.position.x = -((s.distance * 2) % 1.2);
+    const travel = s.distance * TRAVEL_SCALE;
+    for (const { bone, radius } of this.wheels) bone.rotation.z = -(travel / radius);
+    if (this.coupling) this.coupling.crank.rotation.z = -this.coupling.driver.rotation.z;
+    this.rails.position.x = -(travel % TIE_SPACING);
     for (const p of s.pawns) {
       let rig = this.rigs.get(p.id);
       if (!rig) {
