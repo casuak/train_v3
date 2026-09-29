@@ -48,10 +48,10 @@ function view(state = initialState()) {
 
 it('聚焦后无需等待绘制帧就能准确拾取中心', () => {
   const scene = view();
-  scene.focus({ x: 32, y: 4, layer: 'inside' });
+  scene.focus({ x: 32, y: 2, layer: 'inside' });
   const point = scene.worldAt(820, 490);
   expect(point.x).toBeCloseTo(32);
-  expect(point.y).toBeCloseTo(4);
+  expect(point.y).toBeCloseTo(1.2);
 });
 
 it('同一绘制帧内连续平移和缩放仍保持鼠标锚点', () => {
@@ -63,8 +63,26 @@ it('同一绘制帧内连续平移和缩放仍保持鼠标锚点', () => {
   const after = scene.worldAt(500, 350);
   expect(after.x).toBeCloseTo(before.x);
   expect(after.y).toBeCloseTo(before.y);
-  expect(scene.screenAt(before).x).toBeCloseTo(500);
-  expect(scene.screenAt(before).y).toBeCloseTo(350);
+  expect(scene.screenPosition(before).x).toBeCloseTo(500);
+  expect(scene.screenPosition(before).y).toBeCloseTo(350);
+});
+
+it('侧视拾取同时支持车内人物、车顶人物和工作台', () => {
+  const s = initialState();
+  const scene = view(s);
+  const p = s.pawns[0];
+  const roof = s.pawns[1];
+  roof.x = p.x;
+  roof.layer = 'roof';
+  for (const q of [p, roof]) {
+    const screen = scene.screenPosition({ ...q, y: q.layer === 'roof' ? -2.6 : 1.2 });
+    expect(scene.pick(screen.x, screen.y)).toMatchObject({ kind: 'pawn', id: q.id });
+  }
+  const bench = s.facilities.find((f) => f.kind === 'bench')!;
+  const target = scene.screenPosition({ ...bench, x: bench.x + 0.5, y: 1.2 });
+  expect(scene.pick(target.x, target.y)).toMatchObject({ kind: 'facility', id: bench.id });
+  const floor = scene.screenPosition({ x: 18, y: -2, layer: 'roof' });
+  expect(scene.navigationAt(floor.x, floor.y)).toEqual({ x: 18, y: 2, layer: 'roof' });
 });
 
 it('读取另一份旅程后重建同 ID 人物，并释放旧人物几何资源', () => {

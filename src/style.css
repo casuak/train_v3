@@ -210,12 +210,14 @@ kbd {
 }
 .terrain {
   position: absolute;
-  inset: -50px -180px;
+  inset: 0 -180px;
   background-image: var(--terrain-image);
-  background-size: cover;
-  background-position: center 55%;
+  background-size: 100% auto;
+  background-repeat: no-repeat;
+  background-color: #b5c5c9;
+  background-position: center var(--terrain-y, 50%);
   transform: translateX(var(--terrain-shift, 0px));
-  filter: saturate(0.62) brightness(0.77);
+  filter: saturate(0.7) brightness(0.84);
 }
 .atmosphere {
   position: absolute;

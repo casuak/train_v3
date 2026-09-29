@@ -28,7 +28,7 @@ function completeRoute(route: string[], attach = false) {
         ps.map((p) => p.id),
         true,
       );
-      for (const [j, p] of ps.entries()) movePawn(s, p, { x: 16 + j, y: 1, layer: 'roof' });
+      for (const [j, p] of ps.entries()) movePawn(s, p, { x: 16 + j, y: 2, layer: 'roof' });
     }
     if (battling && !s.raidActive) {
       draft(
@@ -36,7 +36,7 @@ function completeRoute(route: string[], attach = false) {
         allies(s).map((p) => p.id),
         false,
       );
-      for (const p of allies(s)) movePawn(s, p, { x: 15, y: 1, layer: 'inside' });
+      for (const p of allies(s)) movePawn(s, p, { x: 15, y: 2, layer: 'inside' });
       battling = false;
     }
     if (!s.journey && !s.raidActive && routeIndex < route.length) {

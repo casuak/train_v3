@@ -1,5 +1,7 @@
 import { FACILITY } from './content';
 import type { Facility, GameState, Point } from './types';
+// Each deck is a horizontal walkway. Layer changes only happen at a ladder.
+export const LANE_Y = 2;
 export const key = (p: Point) => `${p.layer}:${Math.round(p.x)},${Math.round(p.y)}`;
 export const cell = (p: Point): Point => ({
   x: Math.round(p.x),
@@ -10,7 +12,7 @@ export const distance = (a: Point, b: Point) =>
   a.layer === b.layer ? Math.hypot(a.x - b.x, a.y - b.y) : 1000;
 export function footprint(f: Facility): { w: number; h: number } {
   const c = FACILITY[f.kind];
-  return f.rotation % 2 ? { w: c.h, h: c.w } : { w: c.w, h: c.h };
+  return { w: c.w, h: 1 };
 }
 export function facilityAt(s: GameState, p: Point): Facility | undefined {
   return s.facilities.find((f) => {
@@ -20,8 +22,8 @@ export function facilityAt(s: GameState, p: Point): Facility | undefined {
   });
 }
 export function onTrain(s: GameState, p: Point): boolean {
-  if (s.cars.some((c) => p.x >= c.x && p.x < c.x + c.width && p.y >= 0 && p.y < c.height))
-    return true;
+  if (p.y !== LANE_Y) return false;
+  if (s.cars.some((c) => p.x >= c.x && p.x < c.x + c.width)) return true;
   return (
     p.y === 2 &&
     s.cars.some((c, i) => i < s.cars.length - 1 && p.x >= c.x + c.width && p.x < s.cars[i + 1].x)
@@ -30,14 +32,13 @@ export function onTrain(s: GameState, p: Point): boolean {
 export function walkable(s: GameState, p: Point): boolean {
   if (!onTrain(s, p)) return false;
   const f = facilityAt(s, p);
-  return !f || !f.built || f.hp <= 0 || f.kind === 'hatch' || f.kind === 'storage';
+  // Furniture sits against the back wall; people pass in front of it.
+  return !f || !f.built || f.hp <= 0 || f.kind !== 'barricade';
 }
 export function neighbors(s: GameState, p: Point, enemy = false): Point[] {
   const r: Point[] = [
     { ...p, x: p.x + 1 },
     { ...p, x: p.x - 1 },
-    { ...p, y: p.y + 1 },
-    { ...p, y: p.y - 1 },
   ].filter((q) => walkable(s, q));
   const h = s.facilities.find((f) => f.kind === 'hatch' && f.x === p.x && f.y === p.y && f.built);
   if (h && (!enemy || h.hp <= 0)) {
@@ -86,8 +87,6 @@ export function approach(
     ...[
       [1, 0],
       [-1, 0],
-      [0, 1],
-      [0, -1],
     ].map(([x, y]) => ({
       x: Math.round(target.x) + x,
       y: Math.round(target.y) + y,

@@ -1,6 +1,8 @@
 import { EDGES, FACILITY, NODES, SAVE_VERSION, WORKS } from '../sim/content';
 import type { GameState } from '../sim/types';
 import { initialState } from '../sim/game';
+import { migrateToSideView } from './migrate';
+import { LANE_Y } from '../sim/navigation';
 const NAME = 'wandering-line-v1';
 interface StoredSave {
   format: 'wandering-line-save';
@@ -41,7 +43,7 @@ export function serialize(s: GameState): string {
 export function deserialize(raw: string): GameState {
   if (raw.length > 5_000_000) throw new Error('存档超过大小限制');
   const s = JSON.parse(raw) as GameState;
-  if (!s || s.version !== SAVE_VERSION) throw new Error('不支持此存档版本');
+  if (!s || (s.version !== 1 && s.version !== SAVE_VERSION)) throw new Error('不支持此存档版本');
   for (const k of ['pawns', 'cars', 'facilities', 'stacks', 'logs', 'visited'] as const)
     if (!Array.isArray(s[k])) throw new Error('存档结构不完整');
   if (
@@ -249,6 +251,17 @@ export function deserialize(raw: string): GameState {
     ids.add(q.id);
   }
   const base = initialState();
+  if (
+    s.version === SAVE_VERSION &&
+    [
+      ...s.pawns,
+      ...s.facilities,
+      ...s.stacks,
+      ...s.pawns.flatMap((p) => (p.task ? [p.task.target, ...p.task.path] : [])),
+    ].some((p) => p.y !== LANE_Y)
+  )
+    throw new Error('侧视楼层坐标无效');
+  migrateToSideView(s);
   s.stats = { ...base.stats, ...s.stats };
   s.effects = [];
   s.speed = 0;

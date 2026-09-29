@@ -7,3 +7,5 @@ test-results/
 .DS_Store
 public/assets/train-atlas.png
 public/assets/tundra.png
+public/assets/side-atlas.png
+public/assets/side-landscape.png

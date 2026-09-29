@@ -16,8 +16,8 @@ let s = initialState(),
   ui: GameUI,
   canvas: HTMLCanvasElement,
   scene: TrainScene;
-let picked: Pick = { kind: 'ground', point: { x: 20, y: 4, layer: 'inside' } };
-let world: Point = { x: 20, y: 4, layer: 'inside' };
+let picked: Pick = { kind: 'ground', point: { x: 18, y: 2, layer: 'inside' } };
+let world: Point = { x: 18, y: 2, layer: 'inside' };
 function click(selector: string) {
   const el = document.querySelector<HTMLElement>(selector);
   expect(el, selector).not.toBeNull();
@@ -50,6 +50,7 @@ beforeAll(() => {
     pan: vi.fn(),
     focus: vi.fn(),
     worldAt: () => world,
+    navigationAt: () => world,
     screenAt: (p: Point) => ({ x: p.x * 20, y: p.y * 20 }),
     pick: () => picked,
   } as unknown as TrainScene;
@@ -129,11 +130,11 @@ describe('PC 鼠标与快捷键交互', () => {
     click('[data-action="build"]');
     click('[data-action="build-kind"][data-kind="heater"]');
     expect(ui.modal).toBe('');
-    world = { x: 20, y: 4, layer: 'inside' };
+    world = { x: 18, y: 2, layer: 'inside' };
     picked = { kind: 'ground', point: world };
     canvasClick();
     expect(
-      s.facilities.some((f) => f.kind === 'heater' && f.x === 20 && f.y === 4 && !f.built),
+      s.facilities.some((f) => f.kind === 'heater' && f.x === 18 && f.y === 2 && !f.built),
     ).toBe(true);
   });
   it('铁路地图的出发按钮进入旅行并恢复 1 倍速', () => {
@@ -272,4 +273,12 @@ describe('PC 鼠标与快捷键交互', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ' }));
     expect(s.speed).toBe(3);
   });
+});
+
+it('切换作业层后，舷梯命令仍依据所选人物的实际楼层', () => {
+  click(`#crew [data-id="${s.pawns[0].id}"]`);
+  click('[data-action="layer-roof"]');
+  expect(document.querySelector('#inspect [data-action="to-roof"]')!.textContent).toBe('前往车顶');
+  click('#inspect [data-action="to-roof"]');
+  expect(s.pawns[0].task?.target.layer).toBe('roof');
 });

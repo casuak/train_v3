@@ -8,9 +8,10 @@ if (!jsPath || !cssPath) throw new Error('Missing build assets');
 const js = await readFile(`dist/${jsPath.replace(/^\.\//, '')}`, 'utf8');
 const css = await readFile(`dist/${cssPath.replace(/^\.\//, '')}`, 'utf8');
 const atlas =
-  'data:image/png;base64,' + (await readFile('public/assets/train-atlas.png')).toString('base64');
+  'data:image/png;base64,' + (await readFile('public/assets/side-atlas.png')).toString('base64');
 const terrain =
-  'data:image/png;base64,' + (await readFile('public/assets/tundra.png')).toString('base64');
+  'data:image/png;base64,' +
+  (await readFile('public/assets/side-landscape.png')).toString('base64');
 const out = html
   .replace(/<script[^>]+src="[^"]+"[^>]*><\/script>/, '')
   .replace(/<link[^>]+href="[^"]+\.css"[^>]*>/, '')

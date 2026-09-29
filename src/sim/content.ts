@@ -80,13 +80,13 @@ export const FACILITY: Record<
     buildable: true,
   },
   hatch: {
-    name: '车顶舱门',
+    name: '车顶舷梯',
     tile: 13,
     w: 1,
     h: 1,
     hp: 110,
     cost: 0,
-    description: '连接车内与车顶。敌人必须先破坏舱门。',
+    description: '沿舷梯上下车顶。敌人必须先破坏顶部舱门。',
     buildable: false,
   },
   engine: {
@@ -214,4 +214,4 @@ export const EDGES: RouteEdge[] = [
 ];
 export const STEP = 0.05;
 export const GAME_DAY = 480;
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;

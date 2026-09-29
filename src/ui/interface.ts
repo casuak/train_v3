@@ -24,7 +24,7 @@ import {
   trade,
   uid,
 } from '../sim/game';
-import { findPath } from '../sim/navigation';
+import { findPath, LANE_Y } from '../sim/navigation';
 import { deserialize, exportGame, loadGame, saveGame } from '../save/storage';
 import type { FacilityKind, GameState, Item, Point, Work } from '../sim/types';
 import { TrainScene, type Pick } from '../render/scene';
@@ -99,10 +99,10 @@ export class GameUI {
     root.insertAdjacentHTML(
       'beforeend',
       `
-   <header class="topbar"><div class="brand">${ico('train')}<div><b>逐温线</b><span>THE WANDERING LINE</span></div><i>迁徙纪事 / 01</i></div><div id="resources" class="resources"></div><div class="header-actions">${button('save', ico('save'), 'title="保存旅程" aria-label="保存旅程"', 'icon-button')}${button('help', ico('help'), 'title="操作指南" aria-label="操作指南"', 'icon-button')}${button('menu', ico('settings'), 'title="旅程菜单" aria-label="旅程菜单"', 'icon-button')}</div></header>
+   <header class="topbar"><div class="brand">${ico('train')}<div><b>逐温线</b><span>THE WANDERING LINE</span></div><i>横版 2D · 侧视</i></div><div id="resources" class="resources"></div><div class="header-actions">${button('save', ico('save'), 'title="保存旅程" aria-label="保存旅程"', 'icon-button')}${button('help', ico('help'), 'title="操作指南" aria-label="操作指南"', 'icon-button')}${button('menu', ico('settings'), 'title="旅程菜单" aria-label="旅程菜单"', 'icon-button')}</div></header>
    <div id="crew" class="crewbar"></div>
    <aside id="journey-panel" class="journey-panel panel"></aside><aside id="weather" class="weather-panel panel"></aside>
-   <div class="view-controls">${button('layer-inside', '车厢内部', 'data-layer="inside"', 'layer active')}${button('layer-roof', '车顶', 'data-layer="roof"', 'layer')}<span class="separator"></span>${button('zoom-out', '−', 'aria-label="缩小"', 'zoom')}${button('fit', '全景', 'title="恢复全景"', 'zoom fit')}${button('zoom-in', '＋', 'aria-label="放大"', 'zoom')}</div>
+   <div class="view-controls">${button('layer-inside', '车内作业', 'data-layer="inside"', 'layer active')}${button('layer-roof', '车顶防守', 'data-layer="roof"', 'layer')}<span class="separator"></span>${button('zoom-out', '−', 'aria-label="缩小"', 'zoom')}${button('fit', '全景', 'title="恢复全景"', 'zoom fit')}${button('zoom-in', '＋', 'aria-label="放大"', 'zoom')}</div>
    <div id="raid-alert"></div><div id="inspect" class="inspect-panel panel"></div><div id="recent-log" class="recent-log"></div>
    <div id="build-banner" class="build-banner"></div><div id="hint" class="scene-hint">左键选择 · 右键行动 · 滚轮缩放 · 中键拖动</div>
    <footer class="bottom-bar"><nav>${[
@@ -213,13 +213,14 @@ export class GameUI {
   welcome() {
     this.modal = 'welcome';
     this.el('modal-root').innerHTML =
-      `<div class="modal-backdrop welcome-backdrop"><section class="welcome-card"><div class="eyebrow">A JOURNEY THROUGH THE CHANGING WORLD</div><div class="welcome-emblem">${ico('train')}</div><h1>逐温线</h1><p class="english-title">THE WANDERING LINE</p><div class="fine-rule"></div><p class="welcome-copy">世界正在变冷。<br/>带上六位旅人，一列火车，<br/>和寻找下一个春天的希望。</p><div class="welcome-features"><span>经营列车</span><i>✦</i><span>选择旅途</span><i>✦</i><span>守住车顶</span></div>${button('start', `开始迁徙 ${ico('arrow')}`, '', 'primary welcome-start')}<div class="welcome-secondary">${button('continue', '读取旅程存档')}${button('help', '游玩指南')}</div><p class="welcome-foot">PC 网页端 · 鼠标操作 · 空格暂停<br/>试玩版本 / v${version}</p></section></div>`;
+      `<div class="modal-backdrop welcome-backdrop"><section class="welcome-card"><div class="eyebrow">A JOURNEY THROUGH THE CHANGING WORLD</div><div class="welcome-emblem">${ico('train')}</div><h1>逐温线</h1><p class="english-title">THE WANDERING LINE</p><div class="fine-rule"></div><p class="welcome-copy">世界正在变冷。<br/>带上六位旅人，一列火车，<br/>和寻找下一个春天的希望。</p><div class="welcome-features"><span>经营列车</span><i>✦</i><span>选择旅途</span><i>✦</i><span>守住车顶</span></div>${button('start', `开始迁徙 ${ico('arrow')}`, '', 'primary welcome-start')}<div class="welcome-secondary">${button('continue', '读取旅程存档')}${button('help', '游玩指南')}</div><p class="welcome-foot">横版 2D · PC 键鼠 · 空格暂停<br/>试玩版本 / v${version}</p></section></div>`;
   }
   refresh() {
     const s = this.state(),
       living = allies(s),
       t = timeLabel(s);
     this.scene.selected = this.selected;
+    this.scene.selectedFacility = this.facility;
     this.scene.buildKind = this.buildKind;
     this.scene.buildRotation = this.rotation;
     this.scene.gridVisible = !!this.buildKind;
@@ -291,12 +292,12 @@ export class GameUI {
     updateHTML(
       this.el('build-banner'),
       this.buildKind
-        ? `<b>放置${FACILITY[this.buildKind].name}</b><span>左键放置 · R 旋转 · Esc 取消</span>${button('rotate', '旋转')}${button('cancel-build', '完成')}`
+        ? `<b>放置${FACILITY[this.buildKind].name}</b><span>沿地板放置 · R 翻转 · Esc 取消</span>${button('rotate', '左右翻转')}${button('cancel-build', '完成')}`
         : '',
     );
     this.el('build-banner').classList.toggle('show', !!this.buildKind);
     this.el('hint').textContent = this.buildKind
-      ? '保留中央走廊，为建造师预留通路'
+      ? '沿横向空位放置，室内家具不阻挡通行'
       : s.speed === 0
         ? '已暂停 · 可以安排工作、建造与战术命令 · 空格继续'
         : '左键选择 · 右键行动 · 滚轮缩放 · 中键拖动';
@@ -323,7 +324,7 @@ export class GameUI {
           `<div class="stat-line"><span>${label}</span><div><i style="width:${Math.max(0, n)}%;background:${color}"></i></div><b>${Math.round(n)}</b></div>`;
       updateHTML(
         el,
-        `<div class="eyebrow">${ps.length > 1 ? `${ps.length} 位旅人已选择` : 'TRAVELER'}</div><div class="inspect-title"><h2>${esc(p.name)}${ps.length > 1 ? ' 等' : ''}</h2><span>${p.enemy ? '敌对' : esc(p.role)}</span>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div>${ps.length === 1 ? bars('生命', p.hp, '#95bd9f') + bars('饱食', p.hunger, '#cfb278') + bars('精力', p.energy, '#96adbd') : ''}<p class="current-job">${esc(p.status)}${p.task?.forced ? ' · 强制指令' : ''}</p><div class="inspect-actions">${!p.enemy ? button('draft', `${ico('shield')} ${ps.every((p) => p.drafted) ? '解除征召' : '征召'} <kbd>R</kbd>`, '', 'primary') + button('to-roof', this.scene.layer === 'roof' ? '返回车内' : '前往车顶') + button('eat', '进食') + button('rest', '休息') : ''}</div>`,
+        `<div class="eyebrow">${ps.length > 1 ? `${ps.length} 位旅人已选择` : 'TRAVELER'}</div><div class="inspect-title"><h2>${esc(p.name)}${ps.length > 1 ? ' 等' : ''}</h2><span>${p.enemy ? '敌对' : esc(p.role)}</span>${button('clear', ico('close'), 'aria-label="取消选择"', 'close-small')}</div>${ps.length === 1 ? bars('生命', p.hp, '#95bd9f') + bars('饱食', p.hunger, '#cfb278') + bars('精力', p.energy, '#96adbd') : ''}<p class="current-job">${esc(p.status)}${p.task?.forced ? ' · 强制指令' : ''}</p><div class="inspect-actions">${!p.enemy ? button('draft', `${ico('shield')} ${ps.every((p) => p.drafted) ? '解除征召' : '征召'} <kbd>R</kbd>`, '', 'primary') + button('to-roof', ps.every((p) => p.layer === 'roof') ? '返回车内' : '前往车顶') + button('eat', '进食') + button('rest', '休息') : ''}</div>`,
       );
       el.classList.add('visible');
       return;
@@ -376,7 +377,7 @@ export class GameUI {
       this.panel(
         '给旅途留一个位置',
         'BUILD & ARRANGE',
-        `<p class="modal-intro">选择设施，然后在车厢空地点击放置。建造师会取料施工。中央走廊保持畅通。</p><div class="build-grid">${Object.entries(
+        `<p class="modal-intro">选择设施后，沿车厢地板的空位放置。家具靠后墙布置，旅人从前方通过；车顶掩体会阻挡通行。</p><div class="build-grid">${Object.entries(
           FACILITY,
         )
           .filter(([, d]) => d.buildable)
@@ -439,7 +440,7 @@ export class GameUI {
       this.panel(
         '一份给列车长的便笺',
         'HOW TO PLAY',
-        `<div class="help-lead">你的目标：让旅人活着抵达 <b>白桦避风港</b>。</div><div class="help-steps"><article><b>01 / 安顿旅人</b><p>小人自动找食物和床。工作安排决定谁做饭、制作零件、维修与搬运。</p></article><article><b>02 / 安排生产</b><p>右键炉灶或工作台设置清单。选择小人后，右键设施可以强制工作。</p></article><article><b>03 / 守住列车</b><p>敌人先登车顶。点击“征召并部署车顶”，恢复时间执行；也可逐人征召，右键移动或攻击。战后解除征召。</p></article><article><b>04 / 继续迁徙</b><p>到站后在铁路地图选择下一站，领取补给或用票券交易。抵达白桦避风港获胜。</p></article></div><table class="shortcut-table"><tr><td>选择 / 框选</td><td>鼠标左键 / 拖拽空地</td></tr><tr><td>菜单 / 强制行动 / 战术移动</td><td>鼠标右键</td></tr><tr><td>平移 / 缩放</td><td>中键或右键拖拽 / 滚轮</td></tr><tr><td>暂停与恢复</td><td><kbd>空格</kbd> 或右下按钮</td></tr><tr><td>1× / 2× / 3×</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td></tr><tr><td>征召 / 楼层 / 关闭</td><td><kbd>R</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd></td></tr></table><p class="muted">仅面向 PC 网页端。页面切到后台会自动暂停。右下角四个按钮随时调节游戏速度。</p>${button(this.firstStart ? 'return-welcome' : 'close', this.firstStart ? '返回出发页面' : '回到旅途', '', 'primary')}`,
+        `<div class="help-lead">你的目标：让旅人活着抵达 <b>白桦避风港</b>。</div><div class="help-steps"><article><b>01 / 安顿旅人</b><p>侧视剖面同时显示车内与车顶。旅人沿各层左右行走，经舷梯上下。小人自动找食物和床，工作安排控制分工。</p></article><article><b>02 / 安排生产</b><p>右键炉灶或工作台设置清单。选择小人后，右键设施可以强制工作。</p></article><article><b>03 / 守住列车</b><p>敌人先登车顶。点击“征召并部署车顶”，恢复时间执行；也可逐人征召，右键移动或攻击。战后解除征召。</p></article><article><b>04 / 继续迁徙</b><p>到站后在铁路地图选择下一站，领取补给或用票券交易。抵达白桦避风港获胜。</p></article></div><table class="shortcut-table"><tr><td>选择 / 框选</td><td>鼠标左键 / 拖拽空地</td></tr><tr><td>菜单 / 强制行动 / 战术移动</td><td>鼠标右键</td></tr><tr><td>平移 / 缩放</td><td>中键或右键拖拽 / 滚轮</td></tr><tr><td>暂停与恢复</td><td><kbd>空格</kbd> 或右下按钮</td></tr><tr><td>1× / 2× / 3×</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td></tr><tr><td>征召 / 楼层 / 关闭</td><td><kbd>R</kbd> / <kbd>Tab</kbd> / <kbd>Esc</kbd></td></tr></table><p class="muted">仅面向 PC 网页端。页面切到后台会自动暂停。右下角四个按钮随时调节游戏速度。</p>${button(this.firstStart ? 'return-welcome' : 'close', this.firstStart ? '返回出发页面' : '回到旅途', '', 'primary')}`,
       );
       return;
     }
@@ -597,8 +598,10 @@ export class GameUI {
       this.toast('全员已解除征召，恢复日常工作');
     }
     if (a === 'to-roof') {
-      const target = this.scene.layer === 'roof' ? 'inside' : 'roof';
-      for (const p of allies(s).filter((p) => this.selected.includes(p.id))) {
+      const selected = allies(s).filter((p) => this.selected.includes(p.id));
+      const target =
+        selected.length && selected.every((p) => p.layer === 'roof') ? 'inside' : 'roof';
+      for (const p of selected.filter((p) => p.layer !== target)) {
         const h = s.facilities
           .filter((f) => f.kind === 'hatch')
           .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
@@ -700,7 +703,8 @@ export class GameUI {
       this.selected = ps.map((p) => p.id);
       draft(s, this.selected, true);
       const car = s.cars[Math.min(1, s.cars.length - 1)];
-      for (const [i, p] of ps.entries()) movePawn(s, p, { x: car.x + 2 + i, y: 1, layer: 'roof' });
+      for (const [i, p] of ps.entries())
+        movePawn(s, p, { x: car.x + 2 + i, y: LANE_Y, layer: 'roof' });
       this.setLayer('roof');
       this.toast('已征召并下达车顶部署命令。点击 1× 或空格执行。');
     }
@@ -718,7 +722,7 @@ export class GameUI {
       this.hideContext();
     }
     if (a === 'move-here') {
-      this.orderMove({ x: Number(d.x), y: Number(d.y), layer: this.scene.layer });
+      this.orderMove({ x: Number(d.x), y: LANE_Y, layer: this.scene.layer });
       this.hideContext();
     }
     if (a === 'cancel-job') {
@@ -812,19 +816,11 @@ export class GameUI {
       used = new Set<string>();
     let moved = 0;
     for (const p of allies(s).filter((p) => this.selected.includes(p.id))) {
-      const options = [
-        point,
-        ...[
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1],
-          [2, 0],
-          [-2, 0],
-          [1, 1],
-          [-1, -1],
-        ].map(([x, y]) => ({ ...point, x: point.x + x, y: point.y + y })),
-      ];
+      const options = [0, 1, -1, 2, -2, 3, -3, 4, -4].map((dx) => ({
+        ...point,
+        x: point.x + dx,
+        y: LANE_Y,
+      }));
       for (const q of options) {
         const k = `${q.x},${q.y}`;
         if (!used.has(k) && findPath(s, p, q) && movePawn(s, p, q)) {
@@ -856,7 +852,7 @@ export class GameUI {
       };
     });
     canvas.addEventListener('pointermove', (e) => {
-      this.scene.hoverPoint = this.scene.worldAt(e.clientX, e.clientY);
+      this.scene.hoverPoint = this.scene.navigationAt(e.clientX, e.clientY);
       const d = this.dragging;
       if (!d || d.pointerId !== e.pointerId) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true;
@@ -878,7 +874,6 @@ export class GameUI {
       if (d.moved) {
         if (d.button === 0 && !this.buildKind) {
           const ids = allies(this.state())
-            .filter((p) => p.layer === this.scene.layer)
             .filter((p) => {
               const q = this.scene.screenAt(p);
               return (
@@ -896,23 +891,25 @@ export class GameUI {
         return;
       }
       if (d.button === 2) {
+        this.setLayer(pick.point.layer);
         this.context(pick, e.clientX, e.clientY);
         return;
       }
       if (d.button !== 0) return;
       if (this.buildKind) {
-        const p = this.scene.worldAt(e.clientX, e.clientY);
+        const p = this.scene.navigationAt(e.clientX, e.clientY);
         this.result(
           build(
             this.state(),
             this.buildKind,
-            { x: Math.round(p.x), y: Math.round(p.y), layer: this.scene.layer },
+            { x: Math.round(p.x), y: LANE_Y, layer: p.layer },
             this.rotation,
           ),
           '蓝图已放置',
         );
         return;
       }
+      this.setLayer(pick.point.layer);
       if (pick.kind === 'pawn') {
         this.selected = e.shiftKey ? [...new Set([...this.selected, pick.id!])] : [pick.id!];
         this.facility = null;

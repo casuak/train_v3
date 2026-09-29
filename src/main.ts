@@ -1,5 +1,6 @@
 import './style.css';
 import { assets } from './assets';
+import { ATLAS_REGIONS, ATLAS_SIZE } from './render/atlas-regions';
 import { initialState, setSpeed } from './sim/game';
 import { SimulationClock } from './sim/clock';
 import { TrainScene } from './render/scene';
@@ -10,10 +11,9 @@ const root = document.querySelector<HTMLDivElement>('#app')!;
 document.documentElement.style.setProperty('--atlas-image', `url("${assets.atlas}")`);
 document.documentElement.style.setProperty('--terrain-image', `url("${assets.terrain}")`);
 const tileStyles = document.createElement('style');
-tileStyles.textContent = Array.from(
-  { length: 16 },
-  (_, i) =>
-    `.tile-${i}{background-position:${((i % 4) / 3) * 100}% ${(Math.floor(i / 4) / 3) * 100}%;}`,
+tileStyles.textContent = ATLAS_REGIONS.map(
+  ([x, y, w, h], i) =>
+    `.tile-${i}{background-size:${(ATLAS_SIZE / w) * 100}% ${(ATLAS_SIZE / h) * 100}%;background-position:${(x / (ATLAS_SIZE - w)) * 100}% ${(y / (ATLAS_SIZE - h)) * 100}%;}`,
 ).join('');
 document.head.appendChild(tileStyles);
 root.innerHTML =

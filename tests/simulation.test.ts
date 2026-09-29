@@ -69,12 +69,12 @@ describe('生存与工作', () => {
     expect(forceFacility(s, s.pawns[0].id, f.id)).toBeNull();
     expect(billCanRun(s, f.bills[0])).toBe(false);
   });
-  it('建设保留中央通道，正常蓝图最终完成', () => {
+  it('侧视家具沿地板建造且保留横向通行', () => {
     const s = initialState();
     expect(build(s, 'heater', { x: 20, y: 2, layer: 'inside' })).toBeTruthy();
-    expect(build(s, 'heater', { x: 20, y: 4, layer: 'inside' })).toBeNull();
+    expect(build(s, 'heater', { x: 18, y: 2, layer: 'inside' })).toBeNull();
     run(s, 90);
-    expect(s.facilities.find((f) => f.x === 20 && f.y === 4)?.built).toBe(true);
+    expect(s.facilities.find((f) => f.x === 18 && f.y === 2)?.built).toBe(true);
   });
 });
 describe('导航与战斗', () => {
@@ -112,7 +112,7 @@ describe('导航与战斗', () => {
     const s = initialState();
     for (const [i, p] of allies(s).entries()) {
       p.x = 15 + i;
-      p.y = 1;
+      p.y = 2;
       p.layer = 'roof';
       p.weapon = 'rifle';
       p.drafted = true;

@@ -53,8 +53,9 @@ it('导入拒绝缺失坐标或标识的物资', () => {
 });
 
 it.each(['IndexedDB', 'localStorage'])('兼容 v0.1.0 的 %s 存档', async (backend) => {
-  const s = initialState(),
-    slot = `legacy-${backend}`,
+  const s = initialState();
+  s.version = 1;
+  const slot = `legacy-${backend}`,
     raw = serialize(s);
   s.credits = 0;
   if (backend === 'localStorage') localStorage.setItem(`wandering-line-v1-${slot}`, raw);
@@ -78,7 +79,7 @@ it.each(['IndexedDB', 'localStorage'])('兼容 v0.1.0 的 %s 存档', async (bac
       };
     });
   expect((await loadGame(slot))?.credits).toBe(45);
-  expect(deserialize(raw).version).toBe(1);
+  expect(deserialize(raw).version).toBe(2);
 });
 
 it('连续保存按请求顺序完成，读档等待最新保存，快照不受后续修改影响', async () => {

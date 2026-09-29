@@ -2,10 +2,15 @@ import * as THREE from 'three';
 import { assets } from '../assets';
 import { FACILITY } from '../sim/content';
 import { footprint } from '../sim/navigation';
+import { FLOOR_Y, lanePoint, layerAtHeight, sidePoint } from './side-view';
+import { ATLAS_REGIONS, ATLAS_SIZE } from './atlas-regions';
 import type { Facility, GameState, Layer, Pawn, Point } from '../sim/types';
 
 type Rig = {
   root: THREE.Group;
+  body: THREE.Group;
+  visualY: number;
+  lastTime: number;
   leftArm: THREE.Bone;
   rightArm: THREE.Bone;
   leftLeg: THREE.Bone;
@@ -40,10 +45,11 @@ export class TrainScene {
   private stamp = '';
   private width = 1;
   private height = 1;
-  private target = new THREE.Vector2(22, -3);
+  private target = new THREE.Vector2(23, -1.5);
   private zoom = 1;
   layer: Layer = 'inside';
   selected: string[] = [];
+  selectedFacility: string | null = null;
   buildKind: string | null = null;
   buildRotation = 0;
   hoverPoint: Point | null = null;
@@ -63,7 +69,7 @@ export class TrainScene {
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.domElement.setAttribute(
       'aria-label',
-      '列车游戏场景：左键选择，右键行动，滚轮缩放',
+      '横版 2D 侧视列车：上层车顶，下层车厢；左键选择，右键行动，滚轮缩放',
     );
     this.renderer.domElement.tabIndex = 0;
     container.appendChild(this.renderer.domElement);
@@ -81,6 +87,7 @@ export class TrainScene {
     this.camera.lookAt(20, -2, 0);
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+    this.fit();
     this.ready = new Promise((resolve) => {
       if (this.atlas.image) resolve();
       else {
@@ -117,8 +124,9 @@ export class TrainScene {
     if (!m) {
       const t = this.atlas.clone();
       t.needsUpdate = true;
-      t.repeat.set(0.25 - 0.008, 0.25 - 0.008);
-      t.offset.set((tile % 4) / 4 + 0.004, (3 - Math.floor(tile / 4)) / 4 + 0.004);
+      const [x, y, w, h] = ATLAS_REGIONS[tile];
+      t.repeat.set(w / ATLAS_SIZE, h / ATLAS_SIZE);
+      t.offset.set(x / ATLAS_SIZE, 1 - (y + h) / ATLAS_SIZE);
       m = new THREE.MeshBasicMaterial({
         map: t,
         color: tint,
@@ -240,6 +248,7 @@ export class TrainScene {
     this.wheels = [];
     this.stamp = '';
     this.selected = [];
+    this.selectedFacility = null;
     this.buildKind = null;
     this.buildRotation = 0;
     this.hoverPoint = null;
@@ -254,7 +263,7 @@ export class TrainScene {
     this.units.remove(rig.root);
   }
   fit() {
-    this.target.set((this.state().cars.length * 14 + 2) / 2, -3);
+    this.target.set((this.state().cars.length * 14 + 4) / 2, -1.5);
     this.zoom = Math.min(1, 3 / this.state().cars.length);
     this.updateCamera();
   }
@@ -276,7 +285,7 @@ export class TrainScene {
     this.updateCamera();
   }
   focus(p: Point) {
-    this.target.set(p.x, p.y);
+    this.target.set(p.x, FLOOR_Y[p.layer] - 0.8);
     this.zoom = 1.65;
     this.updateCamera();
   }
@@ -288,42 +297,50 @@ export class TrainScene {
         0,
       );
     v.unproject(this.camera);
-    return { x: v.x, y: -v.y, layer: this.layer };
+    return { x: v.x, y: -v.y, layer: layerAtHeight(-v.y) };
+  }
+  navigationAt(x: number, y: number): Point {
+    return lanePoint(this.worldAt(x, y));
   }
   screenAt(p: Point) {
+    return this.screenPosition(sidePoint(p));
+  }
+  screenPosition(p: Point) {
     const v = new THREE.Vector3(p.x, -p.y, 0).project(this.camera),
       r = this.container.getBoundingClientRect();
     return { x: ((v.x + 1) * this.width) / 2 + r.left, y: ((1 - v.y) * this.height) / 2 + r.top };
   }
   pick(x: number, y: number): Pick {
-    const p = this.worldAt(x, y),
+    const visual = this.worldAt(x, y),
+      p = lanePoint(visual),
       s = this.state();
-    const pawn = [...s.pawns]
-      .reverse()
-      .find(
-        (q) =>
-          !q.dead &&
-          q.layer === this.layer &&
-          Math.abs(q.x - p.x) < 0.5 &&
-          Math.abs(q.y - 0.55 - p.y) < 0.85,
-      );
-    if (pawn) return { kind: 'pawn', id: pawn.id, point: p };
-    const f = [...s.facilities].reverse().find((f) => {
-      const d = footprint(f);
+    const pawn = [...s.pawns].reverse().find((q) => {
+      const floor = this.rigs.get(q.id)?.visualY ?? FLOOR_Y[q.layer];
       return (
-        (f.layer === this.layer || f.kind === 'hatch') &&
-        p.x > f.x - 0.5 &&
-        p.x < f.x + d.w - 0.5 &&
-        p.y > f.y - 0.65 &&
-        p.y < f.y + d.h - 0.25
+        !q.dead &&
+        Math.abs(q.x - visual.x) < 0.42 &&
+        visual.y >= floor - 1.6 &&
+        visual.y <= floor + 0.12
+      );
+    });
+    if (pawn) return { kind: 'pawn', id: pawn.id, point: { ...p, layer: pawn.layer } };
+    const f = [...s.facilities].reverse().find((f) => {
+      const d = footprint(f),
+        floor = FLOOR_Y[f.layer];
+      return (
+        visual.x >= f.x - 0.5 &&
+        visual.x <= f.x + d.w - 0.5 &&
+        (f.kind === 'hatch'
+          ? visual.y >= FLOOR_Y.roof - 0.18 && visual.y <= FLOOR_Y.inside
+          : visual.y >= floor - this.facilityHeight(f) && visual.y <= floor + 0.12)
       );
     });
     if (f) return { kind: 'facility', id: f.id, point: p };
-    if (Math.abs(p.x - (s.cars.length * 14 + 1.5)) < 3.5 && p.y > -1 && p.y < 5.5) {
+    if (Math.abs(visual.x - (s.cars.length * 14 + 1.7)) < 3.7 && visual.y > -2 && visual.y < 3.6) {
       const engine = s.facilities.find((f) => f.kind === 'engine');
-      if (engine) return { kind: 'facility', id: engine.id, point: p };
+      if (engine) return { kind: 'facility', id: engine.id, point: { ...p, layer: 'inside' } };
     }
-    return { kind: 'ground', point: { x: Math.round(p.x), y: Math.round(p.y), layer: this.layer } };
+    return { kind: 'ground', point: p };
   }
   private rebuild(s: GameState) {
     this.staticGroup.clear();
@@ -331,111 +348,146 @@ export class TrainScene {
     this.grid.clear();
     this.wheels = [];
     const end = s.cars.length * 14 + 7;
-    for (let x = -45; x < end + 50; x += 1.2)
-      this.rect(this.rails, x, 2.5, 0.28, 6.8, '#514d42', -5, 0.75);
-    for (const y of [-0.25, 5.25]) {
-      this.rect(this.rails, end / 2, y, end + 150, 0.17, '#242c2e', -4);
-      this.rect(this.rails, end / 2, y - 0.03, end + 150, 0.045, '#96a09c', -3);
-    }
+    // A single rail silhouette below the wheels: no receding or overhead track.
+    this.rect(this.rails, end / 2, 3.64, end + 160, 0.5, '#3a4946', -5);
+    for (let x = -80; x < end + 90; x += 1.2)
+      this.rect(this.rails, x, 3.49, 0.8, 0.2, '#635b4b', -4);
+    this.rect(this.rails, end / 2, 3.28, end + 160, 0.15, '#1c3034', -3);
+    this.rect(this.rails, end / 2, 3.2, end + 160, 0.065, '#acb3a1', -2);
     for (let ci = 0; ci < s.cars.length; ci++) {
       const car = s.cars[ci],
         x = car.x,
-        w = car.width;
-      this.rect(this.staticGroup, x + w / 2 - 0.5, 3, w + 0.5, 6, '#152225', -0.5);
-      this.rect(this.staticGroup, x + w / 2 - 0.5, 2, w + 0.5, 5.4, '#4c655f', 0);
-      for (let xx = 0; xx < w; xx++)
-        for (let yy = 0; yy < 5; yy++) {
-          this.sprite(
-            this.staticGroup,
-            this.layer === 'roof' ? 13 : 12,
-            x + xx,
-            yy,
-            1.05,
-            1.05,
-            0.1,
-            this.layer === 'roof' ? '#a0b3ad' : '#b8ab8f',
-          );
-          this.rect(this.grid, x + xx - 0.5, yy, 0.013, 1, '#e4d4a7', 0.8, 0.25);
-          this.rect(this.grid, x + xx, yy - 0.5, 1, 0.013, '#e4d4a7', 0.8, 0.25);
+        w = car.width,
+        center = x + (w - 1) / 2;
+      this.rect(this.staticGroup, center, 0.17, w + 0.36, 3.88, '#192d30', -0.5);
+      this.rect(
+        this.staticGroup,
+        center,
+        0.2,
+        w - 0.14,
+        3.55,
+        ci === 0 ? '#605443' : ci === 1 ? '#45594f' : '#3e514c',
+        0,
+      );
+      // Back wall panels and level windows create a dollhouse cross section.
+      for (let xx = 0; xx < w; xx++) {
+        this.rect(this.staticGroup, x + xx, 0.45, 0.014, 2.9, '#af9d72', 0.12, 0.17);
+        for (const layer of ['inside', 'roof'] as Layer[]) {
+          const y = FLOOR_Y[layer];
+          const square = this.rect(this.grid, x + xx, y + 0.06, 0.97, 0.16, '#e2c384', 6, 0.65);
+          square.userData.layer = layer;
         }
-      this.rect(this.staticGroup, x + w / 2 - 0.5, -0.6, w + 0.3, 0.28, '#273e3e', 1.5);
-      this.rect(this.staticGroup, x + w / 2 - 0.5, 4.7, w + 0.4, 0.3, '#9ba494', 1.5);
-      this.rect(this.staticGroup, x - 0.63, 2, 0.27, 5.5, '#34504b', 1.5);
-      this.rect(this.staticGroup, x + w - 0.37, 2, 0.27, 5.5, '#34504b', 1.5);
-      for (const xx of [2, 8]) {
-        this.rect(this.staticGroup, x + xx, 5.15, 3, 0.62, '#345653', 1);
-        this.rect(this.staticGroup, x + xx, 5.09, 2.6, 0.24, '#91a498', 1.1);
       }
-      for (const xx of [1.6, 9.4]) {
-        const wheel = new THREE.Bone();
-        wheel.position.set(x + xx, -5.62, 1.4);
-        this.sprite(wheel, 6, 0, 0, 1.15, 1.15, 0);
-        this.wheels.push(wheel);
-        this.staticGroup.add(wheel);
+      for (const xx of [2.3, 5.6, 8.9]) {
+        this.rect(this.staticGroup, x + xx, -0.67, 2.05, 1.28, '#1c3639', 0.2);
+        this.rect(this.staticGroup, x + xx, -0.67, 1.84, 1.08, '#8ba4a0', 0.21);
+        this.rect(this.staticGroup, x + xx, -0.48, 1.84, 0.68, '#6d8984', 0.22);
+        this.rect(this.staticGroup, x + xx, -0.24, 1.84, 0.25, '#3b5d59', 0.23);
+        this.rect(this.staticGroup, x + xx, -0.67, 0.06, 1.1, '#344943', 0.24);
+        this.rect(this.staticGroup, x + xx, -0.1, 2.15, 0.1, '#b6a178', 0.25);
       }
-      for (let xx = 0; xx < w; xx += 2.1)
-        this.rect(this.staticGroup, x + xx, 5.08, 0.08, 0.12, '#b9aa78', 1.2);
+      // Ceiling and floor are horizontal; there is no visible top plane.
+      this.rect(this.staticGroup, center, FLOOR_Y.roof + 0.1, w + 0.5, 0.28, '#243d3d', 1.5);
+      this.rect(this.staticGroup, center, FLOOR_Y.roof - 0.08, w + 0.35, 0.1, '#a3b1a1', 1.6);
+      this.rect(this.staticGroup, center, 2.08, w + 0.5, 0.27, '#b39768', 1.5);
+      this.rect(this.staticGroup, center, 2.4, w + 0.35, 0.43, '#284444', 1.5);
+      this.rect(this.staticGroup, center, 2.3, w + 0.25, 0.06, '#799286', 1.6);
+      for (const edge of [x - 0.58, x + w - 0.42])
+        this.rect(this.staticGroup, edge, 0.11, 0.2, 4.03, '#29443f', 1.5);
+      for (let xx = 0.5; xx < w; xx += 1.2) {
+        this.rect(this.staticGroup, x + xx, 2.4, 0.055, 0.075, '#b5a274', 1.7);
+      }
+      for (const xx of [1.7, 9.3]) {
+        this.rect(this.staticGroup, x + xx, 2.7, 2.05, 0.32, '#1f3234', 1.8);
+        for (const axle of [-0.48, 0.48]) {
+          const wheel = new THREE.Bone();
+          wheel.position.set(x + xx + axle, -2.82, 2);
+          this.sprite(wheel, 6, 0, 0, 1.08, 1.08, 0);
+          this.wheels.push(wheel);
+          this.staticGroup.add(wheel);
+        }
+      }
+      for (const xx of [3.8, 8.1]) {
+        this.rect(this.staticGroup, x + xx, -1.31, 1.15, 0.12, '#e6c987', 1);
+        this.rect(this.staticGroup, x + xx, -1.05, 1.9, 0.4, '#f4ce86', 0.15, 0.045);
+      }
       if (ci < s.cars.length - 1) {
-        this.rect(this.staticGroup, x + w + 0.5, 2, 2.8, 1.15, '#303939', 0.5);
-        for (let xx = 0; xx < 5; xx++)
-          this.rect(this.staticGroup, x + w - 0.25 + xx * 0.36, 2, 0.1, 1.2, '#9ca18d', 0.6);
+        const join = x + w + 0.5;
+        this.rect(this.staticGroup, join, 2.07, 2.3, 0.16, '#9e9d85', 1.4);
+        this.rect(this.staticGroup, join, 2.5, 2.3, 0.17, '#283a39', 1.4);
+        this.rect(this.staticGroup, join, FLOOR_Y.roof, 2.3, 0.1, '#627872', 1.4);
+        for (const bar of [0.2, 1.1, 2.0])
+          this.rect(this.staticGroup, x + w - 0.65 + bar, 1.46, 0.04, 1.15, '#788b7b', 1.3);
+        this.rect(this.staticGroup, join, 0.86, 2.3, 0.06, '#9caa91', 1.3);
       }
       this.text(
         this.staticGroup,
         `${String(ci + 1).padStart(2, '0')}  ${car.name}`,
-        x + w / 2 - 0.5,
-        -1.4,
-        '#efe5cd',
-        0.48,
+        center,
+        4.15,
+        '#ede2c6',
+        0.42,
       );
     }
-    const engineX = s.cars.length * 14 + 1.5;
-    this.sprite(this.staticGroup, 14, engineX, 2.2, 7.5, 6.6, 2);
-    this.text(this.staticGroup, '巡游者号 · 02', engineX, -1.6, '#ddc38c', 0.5);
-    this.rect(this.staticGroup, s.cars.length * 14 - 2, 2, 2.6, 1, '#333e3c', 0);
-    for (const f of s.facilities) {
-      if (f.layer !== this.layer && f.kind !== 'hatch') continue;
-      this.drawFacility(f);
-    }
+    const engineX = s.cars.length * 14 + 1.7;
+    this.rect(this.staticGroup, s.cars.length * 14 - 1.1, 2.45, 3.2, 0.18, '#354540', 0.5);
+    this.sprite(this.staticGroup, 14, engineX, 0.7, 7.8, 5, 2);
+    this.text(this.staticGroup, '巡游者号 · 向南', engineX, 4.15, '#dfc48c', 0.42);
+    for (const f of s.facilities) this.drawFacility(f);
+  }
+  private facilityHeight(f: Facility) {
+    return f.kind === 'hatch' ? 3.8 : f.kind === 'bed' ? 0.75 : f.kind === 'engine' ? 1.9 : 1.45;
   }
   private drawFacility(f: Facility) {
     const d = footprint(f),
       cx = f.x + (d.w - 1) / 2,
-      cy = f.y + (d.h - 1) / 2,
+      floor = FLOOR_Y[f.layer],
       opacity = f.built ? 1 : 0.4;
     if (f.kind === 'hatch') {
-      this.rect(this.staticGroup, cx, cy, 0.95, 0.95, '#d5bb78', 0.7);
-      this.rect(this.staticGroup, cx, cy, 0.76, 0.78, f.hp > 0 ? '#273d3d' : '#091515', 0.8);
-      for (let y = -0.25; y <= 0.26; y += 0.18)
-        this.rect(this.staticGroup, cx, cy + y, 0.58, 0.05, '#acaa89', 0.9);
+      for (const offset of [-0.27, 0.27])
+        this.rect(this.staticGroup, cx + offset, 0.13, 0.065, 3.74, '#b5a277', 2);
+      for (let y = -1.5; y < 2; y += 0.32)
+        this.rect(this.staticGroup, cx, y, 0.58, 0.055, '#c7b58a', 2.1);
+      this.rect(
+        this.staticGroup,
+        cx,
+        FLOOR_Y.roof - 0.04,
+        0.9,
+        0.16,
+        f.hp > 0 ? '#d6b776' : '#814537',
+        2.2,
+      );
       return;
     }
     if (f.kind === 'engine') {
-      this.rect(this.staticGroup, cx, cy, 0.95, 0.9, '#3c544b', 0.7);
-      this.text(this.staticGroup, '动力', cx, cy, '#d6c495', 0.3);
+      this.rect(this.staticGroup, cx, 1.15, 0.85, 1.55, '#283f40', 1.8);
+      this.rect(this.staticGroup, cx, 0.73, 0.54, 0.39, '#8da78e', 1.9);
+      this.rect(this.staticGroup, cx, 1.18, 0.55, 0.06, '#d8bd81', 1.9);
+      for (let y = 1.4; y < 1.9; y += 0.16)
+        this.rect(this.staticGroup, cx, y, 0.53, 0.055, '#192f34', 1.9);
       return;
     }
-    const h = f.kind === 'bed' ? 1.55 : f.kind === 'storage' ? 1.25 : 1.65;
+    const height = this.facilityHeight(f);
     const spr = this.sprite(
       this.staticGroup,
       FACILITY[f.kind].tile,
       cx,
-      cy - 0.2,
-      d.w + 0.12,
-      h,
-      1.3 + cy * 0.025,
+      floor - height / 2,
+      d.w + 0.08,
+      height,
+      1.9,
       '#ffffff',
       opacity,
     );
-    if (f.rotation % 2) spr.rotation.z = Math.PI / 2;
-    if (!f.built) {
-      this.rect(this.staticGroup, cx, cy, 0.9, 0.05, '#aee1d0', 2);
-      this.text(this.staticGroup, '待建', cx, cy - 0.7, '#aee1d0', 0.28);
-    }
+    // R mirrors a side-view object, it never turns furniture onto its end.
+    if (f.rotation % 2) spr.scale.x *= -1;
+    if (!f.built) this.text(this.staticGroup, '待建', cx, floor - height - 0.2, '#bce6d2', 0.25);
   }
   private makeRig(p: Pawn, s: GameState): Rig {
     const root = new THREE.Group();
     this.units.add(root);
+    const body = new THREE.Group();
+    root.add(body);
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.35, 24),
       this.material('#081a1b', 0.4),
@@ -452,7 +504,7 @@ export class TrainScene {
     root.add(selection);
     const hips = new THREE.Bone();
     hips.position.set(0, 0.42, 0.2);
-    root.add(hips);
+    body.add(hips);
     const bone = (parent: THREE.Object3D, x: number, y: number) => {
       const b = new THREE.Bone();
       b.position.set(x, y, 0.015);
@@ -460,14 +512,14 @@ export class TrainScene {
       return b;
     };
     const tint = p.enemy ? '#d7a296' : '#ffffff';
-    const leftLeg = bone(hips, -0.115, -0.04),
-      rightLeg = bone(hips, 0.115, -0.04);
+    const leftLeg = bone(hips, -0.04, -0.04),
+      rightLeg = bone(hips, 0.04, -0.04);
     this.sprite(leftLeg, 4, 0, 0.17, 0.23, 0.48, 0.01, tint);
     this.sprite(rightLeg, 5, 0, 0.17, 0.23, 0.48, 0.02, tint);
     const torso = bone(hips, 0, 0.23);
-    this.sprite(torso, 1, 0, -0.08, 0.52, 0.62, 0.04, tint);
-    const leftArm = bone(torso, -0.24, 0.24),
-      rightArm = bone(torso, 0.24, 0.24);
+    this.sprite(torso, 1, 0, -0.08, 0.38, 0.62, 0.04, tint);
+    const leftArm = bone(torso, -0.04, 0.24),
+      rightArm = bone(torso, 0.055, 0.24);
     this.sprite(leftArm, 2, 0, 0.2, 0.21, 0.49, 0.06, tint);
     this.sprite(rightArm, 3, 0, 0.2, 0.21, 0.49, 0.09, tint);
     const head = bone(torso, 0, 0.47);
@@ -481,6 +533,9 @@ export class TrainScene {
     const name = this.text(root, p.name, 0, -1.92, p.enemy ? '#e9a89c' : '#efe6cd', 0.28);
     return {
       root,
+      body,
+      visualY: FLOOR_Y[p.layer],
+      lastTime: s.time,
       leftArm,
       rightArm,
       leftLeg,
@@ -495,12 +550,13 @@ export class TrainScene {
   render() {
     if (!this.atlas.image) return;
     const s = this.state(),
-      stamp = `${this.layer}:${s.cars.length}:${s.facilities.map((f) => `${f.id}:${f.built}:${f.rotation}:${f.hp <= 0}`).join(',')}`;
+      stamp = `${s.cars.length}:${s.facilities.map((f) => `${f.id}:${f.built}:${f.rotation}:${f.hp <= 0}`).join(',')}`;
     if (stamp !== this.stamp) {
       this.rebuild(s);
       this.stamp = stamp;
     }
     this.grid.visible = this.gridVisible;
+    for (const tile of this.grid.children) tile.visible = tile.userData.layer === this.layer;
     for (const wheel of this.wheels) wheel.rotation.z = -s.distance * 2.8;
     this.rails.position.x = -((s.distance * 2) % 1.2);
     for (const p of s.pawns) {
@@ -509,8 +565,11 @@ export class TrainScene {
         rig = this.makeRig(p, s);
         this.rigs.set(p.id, rig);
       }
-      rig.root.visible = p.layer === this.layer;
-      if (!rig.root.visible) continue;
+      rig.root.visible = true;
+      const dt = Math.max(0, s.time - rig.lastTime);
+      rig.lastTime = s.time;
+      const dy = FLOOR_Y[p.layer] - rig.visualY;
+      rig.visualY += Math.sign(dy) * Math.min(Math.abs(dy), dt * 4.8);
       const walking =
           p.task?.path.length && Math.abs(p.x - p.lastX) + Math.abs(p.y - p.lastY) > 0.0001,
         phase = p.walked * 6;
@@ -533,9 +592,9 @@ export class TrainScene {
             ? -1.2
             : 0;
       rig.head.rotation.z = Math.sin(s.time * 1.2) * 0.025;
-      rig.root.position.set(p.x, -p.y, 3 + p.y * 0.07);
-      rig.root.scale.set(p.facing, 1, 1);
-      rig.root.rotation.z = p.dead
+      rig.root.position.set(p.x, -rig.visualY, 4);
+      rig.body.scale.set(p.facing, 1, 1);
+      rig.body.rotation.z = p.dead
         ? 1.4
         : (p.task?.kind === 'sleep' && p.status.includes('休息')) || p.status === '睡眠中'
           ? 1.4
@@ -549,7 +608,7 @@ export class TrainScene {
       if (p.dead) {
         rig.health.visible = false;
         rig.name.visible = false;
-        rig.root.scale.multiplyScalar(0.9);
+        rig.body.scale.multiplyScalar(0.9);
       }
     }
     for (const [id, rig] of this.rigs)
@@ -559,14 +618,14 @@ export class TrainScene {
       }
     this.effectGroup.clear();
     for (const e of s.effects) {
-      if (e.layer !== this.layer) continue;
+      const ey = FLOOR_Y[e.layer];
       if (e.kind === 'shot') {
         const dx = e.tx - e.x,
-          dy = e.ty - e.y;
+          dy = 0;
         const beam = this.rect(
           this.effectGroup,
           (e.x + e.tx) / 2,
-          (e.y + e.ty) / 2 - 0.6,
+          ey - 0.9,
           Math.hypot(dx, dy),
           0.038,
           '#ffe1a0',
@@ -579,7 +638,7 @@ export class TrainScene {
           this.effectGroup,
           e.kind === 'heal' ? '+45' : '✦',
           e.tx,
-          e.ty - 0.8,
+          ey - 0.8,
           e.kind === 'heal' ? '#92d4ba' : '#efb48b',
           0.48,
         );
@@ -588,30 +647,48 @@ export class TrainScene {
       const p = s.pawns.find((p) => p.id === this.selected[0]);
       if (p?.task?.path.length) {
         for (const n of p.task.path)
-          if (n.layer === this.layer)
-            this.rect(this.effectGroup, n.x, n.y, 0.09, 0.09, '#d5c69c', 2, 0.6);
+          this.rect(this.effectGroup, n.x, FLOOR_Y[n.layer] - 0.07, 0.12, 0.07, '#e6c58a', 5, 0.75);
       }
     }
     this.selectionGhost.clear();
+    const selected = s.facilities.find((f) => f.id === this.selectedFacility);
+    if (selected) {
+      const w = footprint(selected).w;
+      this.rect(
+        this.selectionGhost,
+        selected.x + (w - 1) / 2,
+        FLOOR_Y[selected.layer] + 0.03,
+        w,
+        0.08,
+        '#f3d18c',
+        7,
+      );
+    }
     if (this.buildKind && this.hoverPoint) {
       const d = FACILITY[this.buildKind as keyof typeof FACILITY];
       if (d) {
-        const width = this.buildRotation % 2 ? d.h : d.w;
-        const height = this.buildRotation % 2 ? d.w : d.h;
+        const layer = this.buildKind === 'barricade' ? 'roof' : 'inside';
+        const height = this.buildKind === 'bed' ? 0.75 : 1.45;
         const ghost = this.sprite(
           this.selectionGhost,
           d.tile,
-          Math.round(this.hoverPoint.x) + (width - 1) / 2,
-          Math.round(this.hoverPoint.y) + (height - 1) / 2 - 0.2,
+          Math.round(this.hoverPoint.x) + (d.w - 1) / 2,
+          FLOOR_Y[layer] - height / 2,
           d.w,
-          1.5,
+          height,
           7,
           '#b9eddb',
-          0.55,
+          0.6,
         );
-        ghost.rotation.z = this.buildRotation % 2 ? Math.PI / 2 : 0;
+        if (this.buildRotation % 2) ghost.scale.x *= -1;
       }
     }
+    const railScreen = this.screenPosition({ x: 0, y: 3.4, layer: 'inside' });
+    const railY = railScreen.y - this.container.getBoundingClientRect().top;
+    this.container.style.setProperty(
+      '--terrain-y',
+      `${railY - ((this.width + 360) / 1.5) * 0.735}px`,
+    );
     this.container.style.setProperty('--terrain-shift', `${-((s.distance * 3) % 150)}px`);
     this.renderer.render(this.scene, this.camera);
   }

@@ -5,8 +5,8 @@ import {
   distance,
   facilityAt,
   findPath,
-  footprint,
   lineOfSight,
+  LANE_Y,
   onTrain,
   walkable,
 } from './navigation';
@@ -134,7 +134,7 @@ export function makeFacility(
 }
 export function initialState(): GameState {
   const s: GameState = {
-    version: 1,
+    version: 2,
     seed: 73029,
     nextId: 1,
     time: 0,
@@ -172,23 +172,23 @@ export function initialState(): GameState {
     status: 'playing',
     distance: 0,
   };
-  for (const x of [3, 6, 9]) {
-    makeFacility(s, 'bed', x, 0);
-    makeFacility(s, 'bed', x, 4);
-  }
-  makeFacility(s, 'storage', 10, 3);
-  makeFacility(s, 'heater', 10, 0);
-  makeFacility(s, 'hatch', 1, 0);
-  makeFacility(s, 'stove', 16, 0);
-  makeFacility(s, 'bench', 21, 0);
-  makeFacility(s, 'storage', 17, 4);
-  makeFacility(s, 'heater', 24, 4);
-  makeFacility(s, 'hatch', 15, 0);
-  makeFacility(s, 'storage', 30, 0);
-  makeFacility(s, 'storage', 33, 4);
-  makeFacility(s, 'storage', 36, 0);
-  makeFacility(s, 'hatch', 29, 0);
-  makeFacility(s, 'engine', 38, 4);
+  for (const x of [2, 3, 4, 6, 7, 8]) makeFacility(s, 'bed', x, LANE_Y);
+  for (const [kind, x] of [
+    ['hatch', 0],
+    ['storage', 10],
+    ['heater', 11],
+    ['hatch', 14],
+    ['stove', 16],
+    ['bench', 20],
+    ['storage', 23],
+    ['heater', 25],
+    ['hatch', 28],
+    ['storage', 30],
+    ['storage', 33],
+    ['storage', 36],
+    ['engine', 38],
+  ] as [FacilityKind, number][])
+    makeFacility(s, kind, x, LANE_Y);
   const roles = ['列车长', '厨师', '机械师', '护卫', '医生', '建造师'];
   const names = ['林舟', '阿禾', '老宋', '陆隼', '苏叶', '乔安'];
   const colors = ['#d7af70', '#92bda8', '#a9afce', '#d59b81', '#c8b8d4', '#a9bd7f'];
@@ -250,11 +250,11 @@ export function initialState(): GameState {
   };
   for (const [i, qty] of Object.entries(initial))
     deposit(s, i as Item, qty, {
-      x: i === 'raw' || i === 'meal' ? 17 : 30,
-      y: i === 'raw' || i === 'meal' ? 4 : 0,
+      x: i === 'raw' || i === 'meal' ? 23 : 30,
+      y: LANE_Y,
       layer: 'inside',
     });
-  deposit(s, 'metal', 6, { x: 35, y: 3, layer: 'inside' }, false);
+  deposit(s, 'metal', 6, { x: 35, y: LANE_Y, layer: 'inside' }, false);
   log(s, '霜河的冬天正在接近。带领六位旅人，沿铁路向南寻找白桦避风港。', 'good');
   return s;
 }
@@ -276,7 +276,7 @@ function task(s: GameState, kind: TaskKind, duration: number, forced = false): T
   return {
     id: uid(s, 'task'),
     kind,
-    target: { x: 0, y: 0, layer: 'inside' },
+    target: { x: 0, y: LANE_Y, layer: 'inside' },
     stage: 'work',
     progress: 0,
     duration,
@@ -791,6 +791,46 @@ function combatAI(s: GameState, p: Pawn, dt: number) {
   }
   const target = ts.find((t) => distance(t, p) < (p.enemy ? 15 : 7) && lineOfSight(s, p, t));
   if (p.enemy) {
+    // A single side-view lane cannot route around roof cover. Raiders break
+    // the intervening barrier so one barricade cannot stall a raid forever.
+    const goal =
+      target ??
+      ts[0] ??
+      (p.layer === 'roof'
+        ? s.facilities
+            .filter((f) => f.kind === 'hatch')
+            .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0]
+        : s.facilities.find((f) => f.kind === 'engine'));
+    const barrier =
+      goal &&
+      s.facilities
+        .filter(
+          (f) =>
+            f.kind === 'barricade' &&
+            f.layer === p.layer &&
+            f.built &&
+            f.hp > 0 &&
+            f.x >= Math.min(p.x, goal.x) &&
+            f.x <= Math.max(p.x, goal.x),
+        )
+        .sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
+    if (barrier) {
+      p.status = '破坏掩体';
+      if (Math.abs(p.x - barrier.x) < 1.5) {
+        if (p.cooldown <= 0) {
+          barrier.hp = Math.max(0, barrier.hp - 18);
+          p.cooldown = 1.2;
+        }
+      } else {
+        if (!p.task || p.rethink <= 0) {
+          const t = task(s, 'move', 0);
+          if (setPath(s, p, t, barrier)) p.task = t;
+          p.rethink = 1;
+        }
+        if (p.task) movement(s, p, p.task, dt);
+      }
+      return;
+    }
     if (target) {
       attackMove(s, p, target, dt);
       return;
@@ -876,7 +916,7 @@ export function spawnRaid(s: GameState, size = 3) {
       role: '登车敌人',
       color: '#d7846d',
       x: car.x + 4 + i * 2,
-      y: 4,
+      y: LANE_Y,
       layer: 'roof',
       hp: 58,
       hunger: 100,
@@ -975,8 +1015,8 @@ export function addCar(s: GameState): string | null {
   if (!take(s, 'parts', 4)) return '修复车厢需要 4 个零件';
   const x = s.cars.length * 14;
   s.cars.push({ id: uid(s, 'car'), name: '新生货厢', x, width: 12, height: 5 });
-  makeFacility(s, 'hatch', x + 1, 0);
-  makeFacility(s, 'storage', x + 9, 4);
+  makeFacility(s, 'hatch', x + 1, LANE_Y);
+  makeFacility(s, 'storage', x + 9, LANE_Y);
   s.flags.extraCar = true;
   log(s, '新车厢挂接完成！空间扩大，旅行燃料消耗增加 12%。', 'good');
   return null;
@@ -986,19 +1026,19 @@ export function build(s: GameState, kind: FacilityKind, p: Point, rotation = 0):
   if (!def.buildable) return '该设施不能建造';
   if (kind === 'barricade' && p.layer !== 'roof') return '掩体需要建在车顶';
   if (kind !== 'barricade' && p.layer !== 'inside') return '该设施需要建在车内';
-  const w = rotation % 2 ? def.h : def.w,
-    h = rotation % 2 ? def.w : def.h;
-  for (let x = p.x; x < p.x + w; x++)
-    for (let y = p.y; y < p.y + h; y++) {
-      const q = { x, y, layer: p.layer };
-      if (
-        !onTrain(s, q) ||
-        facilityAt(s, q) ||
-        s.pawns.some((a) => !a.dead && distance(a, q) < 0.6)
-      )
-        return '位置被占用或超出车厢';
-      if (y === 2) return '保留中央通道，避免阻断列车通行';
-    }
+  if (!Number.isInteger(p.x) || p.y !== LANE_Y) return '请沿车厢地板或车顶放置';
+  // A blueprint belongs entirely to one carriage, never across a coupler.
+  if (!s.cars.some((c) => p.x >= c.x && p.x + def.w <= c.x + c.width))
+    return '位置超出车厢或位于连接处';
+  for (let x = p.x; x < p.x + def.w; x++) {
+    const q = { x, y: LANE_Y, layer: p.layer };
+    if (
+      !onTrain(s, q) ||
+      facilityAt(s, q) ||
+      (kind === 'barricade' && s.pawns.some((a) => !a.dead && distance(a, q) < 0.6))
+    )
+      return '位置被设施占用';
+  }
   if (available(s, 'metal') < def.cost) return `需要 ${def.cost} 废钢`;
   const f = makeFacility(s, kind, p.x, p.y, false, p.layer);
   f.rotation = rotation;

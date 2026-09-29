@@ -125,7 +125,7 @@ export interface Stats {
   distance: number;
 }
 export interface GameState {
-  version: 1;
+  version: 1 | 2;
   seed: number;
   nextId: number;
   time: number;
