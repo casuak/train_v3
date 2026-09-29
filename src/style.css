@@ -100,6 +100,7 @@ kbd {
   border-bottom: 1px solid #8497882b;
 }
 .brand {
+  margin-left: 42px;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -1743,4 +1744,21 @@ kbd {
     z-index: 60;
     font-size: 12px;
   }
+}
+
+/* Keep the full-screen control accessible on both the title screen and in play. */
+.fullscreen-toggle {
+  position: fixed;
+  top: 17px;
+  left: 18px;
+  z-index: 70;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--gold);
+  background: #122025;
+}
+.fullscreen-toggle[aria-pressed='true'] {
+  border-color: var(--gold);
 }

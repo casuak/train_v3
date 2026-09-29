@@ -37,6 +37,8 @@ export const esc = (v: unknown) =>
   );
 const ico = (name: string) => {
   const paths: Record<string, string> = {
+    fullscreen: 'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',
+    collapse: 'M3 8h5V3 M21 8h-5V3 M8 21v-5H3 M16 21v-5h5',
     train: 'M3 7h18v10H3z M6 3h12v4 M7 20h0 M17 20h0 M7 10h4v4H7z M15 10h3',
     people:
       'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M16 3a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
@@ -99,6 +101,7 @@ export class GameUI {
     root.insertAdjacentHTML(
       'beforeend',
       `
+   ${button('fullscreen', ico('fullscreen'), 'id="fullscreen-toggle" title="进入全屏" aria-label="进入全屏" aria-pressed="false"', 'fullscreen-toggle')}
    <header class="topbar"><div class="brand">${ico('train')}<div><b>逐温线</b><span>THE WANDERING LINE</span></div><i>横版 2D · 侧视</i></div><div id="resources" class="resources"></div><div class="header-actions">${button('save', ico('save'), 'title="保存旅程" aria-label="保存旅程"', 'icon-button')}${button('help', ico('help'), 'title="操作指南" aria-label="操作指南"', 'icon-button')}${button('menu', ico('settings'), 'title="旅程菜单" aria-label="旅程菜单"', 'icon-button')}</div></header>
    <div id="crew" class="crewbar"></div>
    <aside id="journey-panel" class="journey-panel panel"></aside><aside id="weather" class="weather-panel panel"></aside>
@@ -171,8 +174,18 @@ export class GameUI {
       setSpeed(this.getState(), 0);
       this.refresh();
     });
+    document.addEventListener('fullscreenchange', () => this.updateFullscreenButton());
+    this.updateFullscreenButton();
     this.refresh();
     this.welcome();
+  }
+  private updateFullscreenButton() {
+    const active = !!document.fullscreenElement;
+    const button = this.el('fullscreen-toggle');
+    button.innerHTML = ico(active ? 'collapse' : 'fullscreen');
+    button.title = active ? '退出全屏（Esc）' : '进入全屏';
+    button.setAttribute('aria-label', active ? '退出全屏' : '进入全屏');
+    button.setAttribute('aria-pressed', String(active));
   }
   private state() {
     return this.getState();
@@ -531,6 +544,18 @@ export class GameUI {
   private async action(a: string, d: DOMStringMap, e?: MouseEvent) {
     const s = this.state();
     this.hideContext();
+    if (a === 'fullscreen') {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (typeof document.documentElement.requestFullscreen === 'function')
+          await document.documentElement.requestFullscreen();
+        else this.toast('当前浏览器不支持网页全屏，可使用 F11', true);
+      } catch {
+        this.toast('暂时无法进入全屏，请直接打开游戏页面后重试，或使用 F11', true);
+      }
+      this.updateFullscreenButton();
+      return;
+    }
     if (a === 'start') {
       this.firstStart = false;
       this.closeModal();
